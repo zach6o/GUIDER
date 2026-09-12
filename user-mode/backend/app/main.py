@@ -11,13 +11,13 @@ from starlette.responses import JSONResponse
 
 from app.api import router
 from app.auth import SupabaseVerifier
-from app.cloud import Connections, OpenAIVision, expire_connections
+from app.cloud import Connections, expire_connections
 from app.cloud import router as cloud_router
 from app.config import Settings
 from app.database import make_database
 from app.errors import GuideError
 from app.media import LocalPrivateStorage
-from app.provider import FixtureProvider
+from app.providers.registry import registry
 from app.worker import run_worker
 
 
@@ -48,10 +48,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.sessions = sessions
     app.state.verifier = SupabaseVerifier(settings.supabase_url)
     app.state.storage = LocalPrivateStorage(settings.storage_path)
-    app.state.provider = FixtureProvider()
+    app.state.providers = registry
+    # Selected by role, never by name: adding a provider does not touch this file.
+    app.state.provider = registry.select("analyze")
     app.state.worker_healthy = True
     app.state.cloud_connections = Connections()
-    app.state.cloud_provider = OpenAIVision()
+    app.state.cloud_provider = registry.select("guide")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,

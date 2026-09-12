@@ -25,7 +25,13 @@ Status: proposed product implementation baseline, 2026-09-07. No ADR implies exi
 
 ## v2 supersessions
 
-ADRs 016–018 are proposed for the Guide Engine architecture in [20](../20-guide-engine-migration-plan.md) and are not adopted until that plan is approved. They change these earlier decisions and no others.
+ADRs 016–018 belong to the Guide Engine architecture in [20](../20-guide-engine-migration-plan.md). They change these earlier decisions and no others.
+
+| ADR | Status |
+|---|---|
+| [016](016-web-first-tiered-observation.md) | **Adopted** 2026-09-12. Its own gates stay shut: no production continuous observation before the D06 notice and the [011](011-application-allowlisting.md) native gates |
+| [017](017-provider-role-abstraction.md) | Proposed, but **already implemented** — the provider package, registry and role protocols shipped with the migration's PR-1. Adopt or amend it rather than leaving the record behind the code |
+| [018](018-imported-conversation-context.md) | Proposed. Nothing implemented; import work is scheduled last |
 
 | Earlier ADR | Status under v2 | What changes |
 |---|---|---|

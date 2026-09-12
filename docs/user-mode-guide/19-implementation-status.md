@@ -1,8 +1,14 @@
 # 19 · Implementation status and session handoff
 
-## Proposed next architecture: 2026-09-12
+## Guide Engine migration: 2026-09-12
 
-A Guide Engine migration is proposed in [20](20-guide-engine-migration-plan.md), with [ADR-016](adr/016-web-first-tiered-observation.md), [ADR-017](adr/017-provider-role-abstraction.md) and [ADR-018](adr/018-imported-conversation-context.md). **Nothing in it is implemented and no code change is authorized by it.** Baseline verified on this date without modification: 39 backend tests and 13 web unit tests pass; the repository still has no commit. Implemented scope remains exactly as recorded below.
+The Guide Engine migration in [20](20-guide-engine-migration-plan.md) is approved and under way. Phases 0 to 2 are merged; Phase 3 has begun.
+
+Implemented since: the provider package and capability registry; the safety guard outside every adapter; task plans and steps; plan generation, review and version-bound confirmation; the Guide Engine as the only writer of session state, with the 05 transition table enforced; the instruction role with claims and skips; the shared frontend step engine; the Guide Island; the resumable event stream; and tiers 0 and 1 of the observer, which send nothing.
+
+[ADR-016](adr/016-web-first-tiered-observation.md) is **adopted**. Its own gates remain shut: continuous observation stays out of production until the D06 consent notice is approved and the [011](adr/011-application-allowlisting.md) native gates exist, and `Settings.check()` is unchanged. [ADR-017](adr/017-provider-role-abstraction.md) is implemented but still formally proposed, and [ADR-018](adr/018-imported-conversation-context.md) has no implementation.
+
+Current verification: 178 backend tests pass on both SQLite and PostgreSQL, 56 web unit tests pass, and 22 browser scenarios pass in installed Chrome. No real provider request has been made; every role runs on the deterministic fixture.
 
 ## Latest session: 2026-09-08
 

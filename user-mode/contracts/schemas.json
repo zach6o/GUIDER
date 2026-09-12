@@ -579,6 +579,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_ObservationTick_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ObservationTick"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ObservationTick]"
+      },
       "Envelope_Operation_": {
         "properties": {
           "data": {
@@ -1043,6 +1062,99 @@
           "confidence"
         ],
         "title": "Observation"
+      },
+      "ObservationTick": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "advance",
+              "ask",
+              "wait"
+            ],
+            "title": "Decision"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence"
+          },
+          "ui_changed": {
+            "type": "boolean",
+            "title": "Ui Changed"
+          },
+          "anomaly": {
+            "type": "string",
+            "enum": [
+              "none",
+              "different_os",
+              "different_app",
+              "outdated_ui",
+              "error_dialog",
+              "unreadable"
+            ],
+            "title": "Anomaly"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "frames_observed": {
+            "type": "integer",
+            "title": "Frames Observed"
+          },
+          "observation_calls_remaining": {
+            "type": "integer",
+            "title": "Observation Calls Remaining"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision",
+          "confidence",
+          "ui_changed",
+          "anomaly",
+          "note",
+          "frames_observed",
+          "observation_calls_remaining",
+          "session"
+        ],
+        "title": "ObservationTick",
+        "description": "What the tick earned. `advance` is the only decision that moves anything."
+      },
+      "ObserveRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "image_base64": {
+            "type": "string",
+            "maxLength": 5592408,
+            "minLength": 1,
+            "title": "Image Base64"
+          },
+          "admitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Admitted At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "image_base64",
+          "admitted_at"
+        ],
+        "title": "ObserveRequest",
+        "description": "One admitted frame. No idempotency key: a tick is not a command, and\nreplaying one would be meaningless. Rate limits protect it instead."
       },
       "Operation": {
         "properties": {

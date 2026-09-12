@@ -13,6 +13,12 @@ from app import schemas as s
 from app.auth import Db, Owner
 from app.errors import GuideError, not_found
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
+from app.guide.guard import vet_observation
+from app.guide.observation import (
+    MAX_OBSERVATION_CALLS,
+    apply,
+    check_budget,
+)
 from app.guide.planner import steps_for
 from app.guide.steps import (
     confirmed_plan,
@@ -21,7 +27,8 @@ from app.guide.steps import (
     record_claim,
     skip_step,
 )
-from app.media import MAX_BYTES, normalize
+from app.media import MAX_BYTES, normalize, prepare_frame
+from app.providers.base import ObserveContext
 from app.service import (
     cancel_pending,
     check_version,
@@ -438,6 +445,69 @@ async def events(
         s.EventPage(
             items=[s.Event.model_validate(row) for row in rows],
             next_after=rows[-1].sequence if rows else after,
+        ),
+    )
+
+
+@router.post("/sessions/{session_id}/observe", response_model=s.Envelope[s.ObservationTick])
+async def observe(
+    session_id: UUID,
+    body: s.ObserveRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+):
+    """One observer tick. Synchronous on purpose: the latency budget is about a
+    second, and a lost tick is covered by the next one, so this never becomes a
+    durable Operation. The frame is held in memory and never stored."""
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    check_version(session, body.expected_version)
+    if not session.observation_active:
+        raise GuideError(403, "observation_off", "Watching is not switched on for this task.")
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    check_budget(session)
+
+    gate = request.app.state.observation
+    gate.admit(session.id, time.monotonic())
+    if gate.lock(session.id).locked():
+        raise GuideError(409, "observation_in_progress", "Guider is still looking at the last one.")
+
+    instruction = await current_instruction(db, session)
+    if instruction is None:
+        raise GuideError(409, "invalid_transition", "There is no current instruction to check.")
+    step = await owned_step(db, session, instruction.step_id)
+
+    async with gate.lock(session.id):
+        pixels = await asyncio.to_thread(prepare_frame, body.image_base64)
+        result = vet_observation(
+            await asyncio.wait_for(
+                request.app.state.observer.observe(
+                    ObserveContext(
+                        success_criterion=step.success_criterion,
+                        expected_result=step.expected_result,
+                        application_key=step.application_key,
+                    ),
+                    pixels,
+                ),
+                timeout=20,
+            )
+        )
+        decision = await apply(db, session, step, instruction, result, request.state.request_id)
+        if decision == "advance":
+            await queue_instruction(db, session, request.state.request_id)
+
+    return envelope(
+        request,
+        s.ObservationTick(
+            decision=decision,
+            confidence=result.confidence,
+            ui_changed=result.ui_changed,
+            anomaly=result.anomaly,
+            note=result.note,
+            frames_observed=session.frames_observed,
+            observation_calls_remaining=max(0, MAX_OBSERVATION_CALLS - session.observation_calls),
+            session=s.Session.model_validate(session),
         ),
     )
 

@@ -5,7 +5,7 @@ Adapters implement bounded roles and return validated structures, never free tex
 Selection is by role and capability; a provider name must not be compared outside
 this package.
 
-The `analyze`, `guide`, `plan` and `instruct` roles below exist today. The
+The `analyze`, `guide`, `plan`, `instruct` and `observe` roles below exist today. The
 remaining roles in `Role` are declared so the registry and descriptors are ready
 for them; their Protocols land with the phase that implements them, because a
 Protocol no adapter satisfies is fiction.
@@ -97,6 +97,33 @@ class ProposedInstruction(Schema):
     cannot_find_hint: str = Field(max_length=300)
 
 
+class ObserveContext(Schema):
+    """What the observer is asked. It receives the step's testable condition, not
+    the prose shown to the user, and no history."""
+
+    success_criterion: str = Field(min_length=1, max_length=500)
+    expected_result: str = Field(max_length=500)
+    application_key: str = Field(max_length=80)
+
+
+class ObserveResult(Schema):
+    """Evidence about the current screen, and nothing else.
+
+    There is deliberately no next_step, where, or any other directive field: the
+    observer answers questions, it does not write guidance (ADR-016). A cheap
+    model answering a constrained question is what keeps tier 2 affordable.
+    """
+
+    step_complete: bool
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
+    app_visible: str = Field(max_length=80)
+    ui_changed: bool
+    anomaly: Literal[
+        "none", "different_os", "different_app", "outdated_ui", "error_dialog", "unreadable"
+    ] = "none"
+    note: str = Field(max_length=200)
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """What an adapter can do. The registry selects on this, never on `id`."""
@@ -133,6 +160,13 @@ class InstructionWriter(Protocol):
     advance the step or issue a blocked final action (doc 12)."""
 
     async def instruct(self, ctx: InstructionContext) -> ProposedInstruction: ...
+
+
+class VisionObserver(Protocol):
+    """Role `observe`: one admitted frame to one verdict. Cannot advance a step,
+    write an instruction, or see anything but the current frame."""
+
+    async def observe(self, ctx: ObserveContext, image: bytes) -> ObserveResult: ...
 
 
 class LiveGuidanceProvider(Protocol):

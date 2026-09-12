@@ -19,8 +19,23 @@ export interface Analysis {
   explanation: string; needs_context: boolean; context_request: string | null;
 }
 export interface Operation {
-  id: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
-  result: Analysis | null; error: { message: string } | null;
+  id: string; kind?: 'analyze' | 'plan';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  result: Analysis | null; result_id?: string | null; error: { message: string } | null;
+}
+export interface Step {
+  id: string; ordinal: number; title: string; action: string;
+  expected_result: string; success_criterion: string; fallback: string; explanation: string;
+  application_key: string; risk: 'low' | 'medium' | 'high';
+  policy_disposition: 'allow' | 'confirm' | 'block';
+  evidence_kind: 'visual' | 'text' | 'self_report'; required: boolean;
+  status: string; attempt_count: number; verified_at: string | null;
+}
+export interface Plan {
+  id: string; task_id: string; session_id: string; version: number;
+  status: 'draft' | 'confirmed' | 'superseded'; assumptions: string[];
+  policy_version: string; confirmed_at: string | null; steps: Step[];
+  created_at: string; updated_at: string;
 }
 export interface Receipt { id: string; status: string; online_purge_due_at: string }
 export interface TaskInput { goal: string; category: Category; application_key: string }
@@ -32,6 +47,9 @@ export interface GuideApi {
   upload(task: Task, session: Session, file: Blob, replaces?: Screenshot): Promise<{ screenshot: Screenshot; session: Session }>;
   content(id: string): Promise<Blob>;
   analyze(task: Task, session: Session, screenshot: Screenshot): Promise<{ operation_id: string; session: Session }>;
+  requestPlan(task: Task, session: Session): Promise<{ operation_id: string; session: Session }>;
+  plan(id: string): Promise<Plan>;
+  confirmPlan(plan: Plan, session: Session): Promise<{ plan: Plan; session: Session }>;
   operation(id: string): Promise<Operation>;
   deleteImage(id: string): Promise<Receipt>;
   pause(id: string): Promise<Session>;

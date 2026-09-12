@@ -266,3 +266,20 @@ def test_a_plan_needs_at_least_one_step():
 
 def test_needs_review_message_is_shared_with_the_other_roles():
     assert NEEDS_REVIEW
+
+
+async def test_polling_a_plan_operation_points_at_the_plan(harness):
+    """A plan operation has no inline result; it names the plan to fetch."""
+    created = await create(harness)
+    queued = await request_plan(harness, created)
+    await tick(harness.app)
+    operation_id = queued.json()["data"]["operation_id"]
+
+    response = await harness.client.get(PREFIX + f"/operations/{operation_id}")
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert (body["kind"], body["status"]) == ("plan", "succeeded")
+    assert body["result"] is None
+    plan = await harness.client.get(PREFIX + f"/plans/{body['result_id']}")
+    assert plan.status_code == 200
+    assert plan.json()["data"]["steps"]

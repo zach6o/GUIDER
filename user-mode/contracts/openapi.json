@@ -3320,6 +3320,18 @@
               }
             ]
           },
+          "result_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Id"
+          },
           "error": {
             "anyOf": [
               {

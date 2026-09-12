@@ -1,9 +1,32 @@
-import type { Analysis, GuideApi, Operation, Screenshot, Session, Task } from './types';
+import type { Analysis, GuideApi, Operation, Plan, Screenshot, Session, Task } from './types';
 
 const tasks = new Map<string, Task>();
 const sessions = new Map<string, Session>();
 const images = new Map<string, { blob: Blob; screenshot: Screenshot }>();
 const operations = new Map<string, Operation>();
+const plans = new Map<string, Plan>();
+
+// Mirrors FIXTURE_PLAN in the backend fixture provider, so the offline demo shows
+// the same roadmap the development adapter produces.
+const demoSteps = [
+  { title: 'Open the terminal', action: 'Open the integrated terminal in your editor.',
+    expected_result: 'A shell prompt appears in a panel.',
+    success_criterion: 'A command prompt is visible and accepts typing.',
+    fallback: 'Use the View menu, then Terminal.',
+    explanation: 'The interpreter reports what went wrong in the terminal, not the editor.' },
+  { title: 'Show which interpreter is running',
+    action: 'Type `python -c "import sys; print(sys.executable)"` and press Enter.',
+    expected_result: 'A file path to a python executable is printed.',
+    success_criterion: 'A path ending in python or python.exe is visible in the output.',
+    fallback: 'If `python` is not found, try `py -c` on Windows or `python3 -c` elsewhere.',
+    explanation: 'A package installed for one interpreter is invisible to another. Knowing which one runs your code is what makes the next step meaningful.' },
+  { title: 'List what that interpreter can see',
+    action: 'Type `python -c "import requests"` and press Enter.',
+    expected_result: 'Either nothing is printed, or the same ModuleNotFoundError appears.',
+    success_criterion: 'The command finishes and its output is visible.',
+    fallback: 'If the prompt does not return, press Ctrl+C and try again.',
+    explanation: 'Silence means the package is available to this interpreter. Repeating the error confirms the package is genuinely missing here.' },
+];
 const uid = () => crypto.randomUUID();
 const timestamp = () => new Date().toISOString();
 const expiry = () => new Date(Date.now() + 86_400_000).toISOString();
@@ -71,6 +94,46 @@ export const demoApi: GuideApi = {
     const operation: Operation = { id: uid(), status: 'succeeded', result, error: null };
     operations.set(operation.id, operation); current.state_version++;
     return clone({ operation_id: operation.id, session: current });
+  },
+  async requestPlan(task, session) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) throw new Error('Reload the task and try again.');
+    for (const existing of plans.values()) {
+      if (existing.session_id === current.id) existing.status = 'superseded';
+    }
+    const version = [...plans.values()].filter(item => item.session_id === current.id).length + 1;
+    const plan: Plan = {
+      id: uid(), task_id: task.id, session_id: current.id, version, status: 'draft',
+      assumptions: [
+        'This fixed roadmap comes from a development fixture, not from a planner model.',
+        `Written for the ${task.application_key.replace('_', ' ')} workflow on this machine.`,
+      ],
+      policy_version: 'development-1', confirmed_at: null,
+      steps: demoSteps.map((step, index) => ({
+        ...step, id: uid(), ordinal: index + 1, application_key: task.application_key,
+        risk: 'low', policy_disposition: 'allow', evidence_kind: 'visual', required: true,
+        status: 'pending', attempt_count: 0, verified_at: null,
+      })),
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    plans.set(plan.id, plan);
+    const operation: Operation = { id: uid(), kind: 'plan', status: 'succeeded', result: null,
+      result_id: plan.id, error: null };
+    operations.set(operation.id, operation);
+    current.state = 'awaiting_user_confirmation'; current.state_version++;
+    return clone({ operation_id: operation.id, session: current });
+  },
+  async plan(id) { return clone(requireItem(plans, id)); },
+  async confirmPlan(plan, session) {
+    const current = requireItem(sessions, session.id);
+    const saved = requireItem(plans, plan.id);
+    if (saved.status === 'superseded' || saved.version !== plan.version) {
+      throw new Error('This plan was replaced. Review the current plan before starting.');
+    }
+    if (current.state_version !== session.state_version) throw new Error('Reload the task and try again.');
+    saved.status = 'confirmed'; saved.confirmed_at = timestamp(); saved.updated_at = timestamp();
+    current.state_version++;
+    return clone({ plan: saved, session: current });
   },
   async operation(id) { return clone(requireItem(operations, id)); },
   async deleteImage(id) {

@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
   Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
-  LogOut, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal, Trash2, X, Zap } from 'lucide-react';
+  ListChecks, LogOut, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal, Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
 import { LiveGuide } from './LiveGuide';
 import { prepareImage } from './image';
-import type { Analysis, Category, Screenshot, Session, Task } from './types';
+import type { Analysis, Category, Plan, Screenshot, Session, Task } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
   { id: 'setup', label: 'Set something up', icon: Zap }, { id: 'run', label: 'Run a project', icon: Play },
   { id: 'debug', label: 'Fix a problem', icon: Code2 }, { id: 'understand', label: 'Understand something', icon: CircleHelp },
   { id: 'test', label: 'Test my work', icon: CheckCircle2 }, { id: 'git_github', label: 'Git & GitHub', icon: GitBranch },
 ];
-type Page = 'home' | 'task' | 'history' | 'privacy' | 'live';
+type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live';
 type HistoryItem = { session: Session; task_title: string };
 
 export default function App() {
@@ -28,6 +28,8 @@ export default function App() {
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null);
   const [imageUrl, setImageUrl] = useState('');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [openStep, setOpenStep] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -62,6 +64,7 @@ export default function App() {
   function reset() {
     generation.current++; setTask(null); setSession(null); setScreenshot(null); setAnalysis(null);
     setDraft(null); setImageUrl(''); setGoal(''); setPage('home'); setError(''); setNotice('');
+    setPlan(null); setOpenStep('');
   }
   async function work(label: string, action: () => Promise<void>) {
     const actionId = ++actionSequence.current;
@@ -122,6 +125,41 @@ export default function App() {
       throw new Error('The explanation is taking too long. Pause this task and try again later.');
     });
   }
+  async function buildPlan() {
+    if (!task || !session) return;
+    const token = ++generation.current;
+    await work('Working out the steps…', async () => {
+      const current = await api.session(session.id);
+      const pending = await api.requestPlan(task, current);
+      if (generation.current !== token) return;
+      setSession(pending.session);
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (!isDemo) await new Promise(resolve => setTimeout(resolve, 2000));
+        if (generation.current !== token) return;
+        const operation = await api.operation(pending.operation_id);
+        if (generation.current !== token) return;
+        if (operation.status === 'succeeded' && operation.result_id) {
+          setPlan(await api.plan(operation.result_id));
+          setSession(await api.session(session.id));
+          setOpenStep(''); setPage('plan');
+          return;
+        }
+        if (['failed', 'canceled'].includes(operation.status)) {
+          throw new Error(operation.error?.message || 'The plan could not be prepared.');
+        }
+      }
+      throw new Error('Preparing the plan is taking too long. Try again in a moment.');
+    });
+  }
+  async function confirmPlan() {
+    if (!plan || !session) return;
+    await work('Confirming the plan…', async () => {
+      const current = await api.session(session.id);
+      const confirmed = await api.confirmPlan(plan, current);
+      setPlan(confirmed.plan); setSession(confirmed.session);
+      setNotice('Plan confirmed. Guidance for these steps arrives in a later release.');
+    });
+  }
   async function deleteImage() {
     if (!screenshot) return;
     generation.current++;
@@ -171,7 +209,7 @@ export default function App() {
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><span className="breadcrumb">Workspace <ChevronRight size={14} /><strong>{page === 'live' ? 'Live screen guide' : page === 'home' ? 'A fresh start' : page === 'task' ? 'Screenshot help' : page === 'history' ? 'Task history' : 'Privacy & control'}</strong></span>
+      <header className="topbar"><span className="breadcrumb">Workspace <ChevronRight size={14} /><strong>{page === 'live' ? 'Live screen guide' : page === 'home' ? 'A fresh start' : page === 'task' ? 'Screenshot help' : page === 'plan' ? 'Your plan' : page === 'history' ? 'Task history' : 'Privacy & control'}</strong></span>
         <span className="mode-label"><span />{page === 'live' ? (sharing ? 'Window sharing on' : 'Screen guide') : isDemo ? 'Local demo' : 'Screenshot mode'}</span></header>
       <main>
         {isDemo && page !== 'live' && <div className="demo-banner"><span><span className="tiny-tag">PREVIEW</span> A place to try Guider. Everything stays in this tab and clears on refresh.</span><button onClick={() => navigate('privacy')} disabled={!!busy}>How it works <ArrowRight size={14} /></button></div>}
@@ -199,7 +237,31 @@ export default function App() {
           <button className="text-button back-link" disabled={!!busy} onClick={reset}><ArrowLeft size={16} /> Start a new task</button>
           <div className="task-heading"><div><span className="eyebrow">{task.category.replace('_', ' & ')} · {task.application_key.replace('_', ' ')}</span><h1>{task.title}</h1></div><span className="status-pill">{terminal ? 'Stopped' : session.state === 'paused' ? 'Paused' : 'Screenshot help'}</span></div>
           <div className="session-controls"><span><EyeOff size={15} /> Observation off</span><div><button onClick={() => void restrict(false)} disabled={!!terminal || session.state === 'paused'}><Pause size={15} /> Pause</button><button onClick={() => void restrict(true)} disabled={!!terminal}><Square size={13} /> Stop</button></div></div>
+          {!terminal && <section className="plan-callout"><span className="brand-mark"><ListChecks size={22} /></span><div><h2>{plan ? `A plan is ready · version ${plan.version}` : 'Want the whole route first?'}</h2><p>{plan ? (plan.status === 'confirmed' ? 'You confirmed this plan. Review it any time.' : 'Review the suggested steps and confirm when you’re happy.') : 'Guider can suggest the steps for this goal. You review them before anything begins.'}</p></div><button className="primary" disabled={!!busy} onClick={() => plan ? navigate('plan') : void buildPlan()}>{busy === 'Working out the steps…' ? <><LoaderCircle size={16} className="spin" /> {busy}</> : plan ? <>Review the plan <ArrowRight size={17} /></> : <>Suggest the steps <ArrowRight size={17} /></>}</button></section>}
           {terminal ? <section className="empty-panel"><CheckCircle2 size={32} /><h2>A good place to pause.</h2><p>Your task was stopped. No outcome has been verified.</p><button className="primary" onClick={reset}>Start another task <Plus size={17} /></button>{screenshot && <button className="text-button danger" disabled={!!busy} onClick={() => void deleteImage()}><Trash2 size={16} /> Delete screenshot and analysis</button>}</section> : draft ? <ImageEditor key={String(draft.size) + draft.type} initial={draft} busy={!!busy} onUpload={blob => void upload(blob)} onCancel={() => setDraft(null)} /> : !screenshot ? <section className="upload-panel" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!busy && event.dataTransfer.files[0]) void selectFile(event.dataTransfer.files[0]); }}><div className="upload-icon"><ImagePlus size={30} /></div><span className="eyebrow">LET’S SEE THE CONTEXT</span><h2>A screenshot is a good start.</h2><p>Share the error or the part that’s confusing.<br />You’ll get to crop and hide private details first.</p><button className="primary" onClick={() => input.current?.click()} disabled={!!busy}>Choose a screenshot <ArrowDown size={16} /></button><small>or drop it here · PNG, JPEG, WebP · Up to 10 MiB</small></section> : <div className="analysis-layout"><section className="evidence-card"><div className="section-heading"><h2>Your screenshot</h2><button className="icon-button danger" aria-label="Delete screenshot and analysis" onClick={() => void deleteImage()} disabled={!!busy}><Trash2 size={17} /></button></div><div className="image-stage"><div className="result-image"><img src={imageUrl} alt="Your uploaded screenshot" />{analysis?.observations.map((item, index) => item.bbox && <div key={index} title={item.label} className="evidence-marker" style={{ left: `${item.bbox.x * 100}%`, top: `${item.bbox.y * 100}%`, width: `${item.bbox.width * 100}%`, height: `${item.bbox.height * 100}%` }}><span>{index + 1}</span></div>)}</div></div><p className="privacy-note"><ShieldCheck size={14} /> {isDemo ? 'In this tab only · Cleared on refresh' : 'Private · Expires within 24 hours'}</p><button className="text-button" disabled={!!busy} onClick={() => input.current?.click()}><ImagePlus size={16} /> Replace screenshot</button></section><section className="explanation-card"><div className="guide-heading"><span className="brand-mark"><Compass size={22} /></span><div><strong>A little clarity</strong><small>Development example</small></div></div>{analysis ? <><h2>Here’s what we can tell.</h2><p>{analysis.explanation}</p>{analysis.observations.map((item, index) => <div className="observation" key={index}><span>{index + 1}</span>{item.label}</div>)}{analysis.context_request && <div className="context-question"><CircleHelp size={20} /><p>{analysis.context_request}</p></div>}<span className="privacy-note">Explanation only. No task outcome has been verified.</span></> : <><h2>Ready when you are.</h2><p>The development adapter recognizes the synthetic Python example. Other images will receive a request for context.</p><button className="primary" disabled={!!busy} onClick={() => void analyze()}>{busy ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <>Explain this screenshot <ArrowRight size={17} /></>}</button></>}</section></div>}
+        </div>}
+
+        {page === 'plan' && task && session && plan && <div className="plan-content">
+          <button className="text-button back-link" disabled={!!busy} onClick={() => navigate('task')}><ArrowLeft size={16} /> Back to the task</button>
+          <div className="task-heading"><div><span className="eyebrow">STEP-BY-STEP · VERSION {plan.version}</span><h1>{task.title}</h1></div><span className="status-pill">{plan.status === 'confirmed' ? 'Confirmed' : 'Awaiting your review'}</span></div>
+          <p className="muted plan-intro">Guider suggests {plan.steps.length} steps. Read them over — nothing starts until you say so, and you perform every action yourself.</p>
+          {plan.assumptions.length > 0 && <section className="assumptions" aria-label="Assumptions"><span className="eyebrow">WHAT THIS ASSUMES</span><ul>{plan.assumptions.map((item, index) => <li key={index}><CircleHelp size={15} />{item}</li>)}</ul></section>}
+          <ol className="plan-steps">{plan.steps.map(step => <li key={step.id} className={step.policy_disposition === 'block' ? 'plan-step blocked' : 'plan-step'}>
+            <span className="plan-ordinal">{step.ordinal}</span>
+            <div className="plan-body">
+              <h3>{step.title}{step.policy_disposition === 'block' && <span className="blocked-tag">Needs separate review</span>}</h3>
+              <p className="plan-action">{step.action}</p>
+              <p className="plan-expected"><Check size={14} /> {step.expected_result}</p>
+              {step.explanation && <><button className="text-button explain-toggle" aria-expanded={openStep === step.id} onClick={() => setOpenStep(openStep === step.id ? '' : step.id)}><CircleHelp size={15} /> {openStep === step.id ? 'Hide why' : 'Why this step?'}</button>
+                {openStep === step.id && <div className="plan-why"><p>{step.explanation}</p>{step.fallback && <p><strong>If that doesn’t work:</strong> {step.fallback}</p>}</div>}</>}
+            </div>
+          </li>)}</ol>
+          <section className="plan-actions">
+            {plan.status === 'confirmed'
+              ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><button className="text-button" disabled={!!busy} onClick={() => navigate('task')}>Back to the task <ArrowRight size={16} /></button></>
+              : <><div><strong>Happy with these steps?</strong><small>Confirming records the version. You can ask for a different plan instead.</small></div><div className="plan-buttons"><button className="text-button" disabled={!!busy} onClick={() => void buildPlan()}>Suggest a different plan</button><button className="primary" disabled={!!busy} onClick={() => void confirmPlan()}>{busy ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <>Confirm this plan <Check size={17} /></>}</button></div></>}
+          </section>
+          <p className="privacy-note"><ShieldCheck size={14} /> A plan is a suggestion. Guider never performs these steps for you.</p>
         </div>}
 
         {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <button disabled={!!busy} key={item.session.id} onClick={() => void openTask(item)}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}

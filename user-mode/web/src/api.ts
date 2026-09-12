@@ -46,6 +46,13 @@ const remote: GuideApi = {
     session_id: session.id, expected_version: session.state_version,
     screenshot_ids: [screenshot.id], question: task.goal,
   }),
+  requestPlan: (task, session) => post(`/tasks/${task.id}/plans`, {
+    session_id: session.id, expected_version: session.state_version,
+  }),
+  plan: id => request(`/plans/${id}`),
+  confirmPlan: (plan, session) => post(`/plans/${plan.id}/confirm`, {
+    expected_version: session.state_version, plan_version: plan.version,
+  }),
   operation: id => request(`/operations/${id}`),
   deleteImage: id => request(`/screenshots/${id}`, { method: 'DELETE' }),
   pause: id => post(`/sessions/${id}/pause`, { reason: 'user' }),

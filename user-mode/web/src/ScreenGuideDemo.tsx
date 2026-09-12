@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Check, CheckCircle2, Compass, Eye, LoaderCircle, Maximize2, MonitorUp,
   Moon, MousePointer2, Pause, Play, RotateCcw, Settings, Square, Sun, X } from 'lucide-react';
 import { ScreenCapture } from './screenCapture';
-import { demoReducer, demoSteps, initialDemoState } from './demoGuide';
+import { correctionText, demoReducer, demoSteps, initialDemoState } from './demoGuide';
 import type { DemoActionId } from './demoGuide';
 import './screenGuideDemo.css';
 
@@ -165,7 +165,7 @@ export function ScreenGuideDemo({ onSharingChange }: { onSharingChange: (active:
           <h2>{complete ? 'The sample task is complete.' : state.paused ? 'Continue when you’re ready.' : step.title}</h2>
           <p>{complete ? 'The practice app is now using its saved dark theme. Each hint advanced after its expected sample change appeared.' : state.paused ? 'Hints and automatic progression are paused. Resume to continue from this step.' : step.instruction}</p></div>
         {!complete && <div className="demo-evidence"><span>{state.phase === 'checking' ? 'CHECKING THE SAMPLE' : 'WHAT THE DEMO SEES'}</span><p>{state.phase === 'checking' ? step.evidence : step.observation}</p></div>}
-        {state.correction && <p className="demo-correction" role="status">{state.correction}</p>}
+        {correctionText(state) && <p className="demo-correction" role="status">{correctionText(state)}</p>}
         <ol className="interactive-progress" aria-label="Demo progress">{demoSteps.map((item, index) => <li key={item.id} aria-current={!complete && state.step === index ? 'step' : undefined} className={complete || index < state.step ? 'done' : state.step === index ? 'current' : ''}><span>{complete || index < state.step ? <Check size={14} /> : index + 1}</span><div>{item.target}<small>{complete || index < state.step ? 'Sample change verified' : state.step === index ? state.phase === 'checking' ? 'Checking…' : 'Current step' : 'Up next'}</small></div></li>)}</ol>
         <div className="interactive-demo-actions">
           {complete ? <button className="primary" onClick={() => dispatch({ type: 'restart' })}><RotateCcw size={16} />Replay demo</button>

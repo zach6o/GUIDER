@@ -1,9 +1,34 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import DateTime, TypeDecorator
+
+# Portable development enums from 08-data-model.md, enforced as CHECK constraints
+# until the PostgreSQL migration introduces native types.
+PLAN_STATUSES = ("draft", "confirmed", "superseded")
+STEP_STATUSES = (
+    "pending",
+    "instruction_ready",
+    "awaiting_user_action",
+    "user_claimed",
+    "verified",
+    "blocked",
+    "skipped",
+    "superseded",
+)
+RISKS = ("low", "medium", "high")
+DISPOSITIONS = ("allow", "confirm", "block")
+EVIDENCE_KINDS = ("visual", "text", "self_report")
 
 
 def now() -> datetime:
@@ -81,6 +106,79 @@ class GuideSession(Owned, Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class TaskPlan(Owned, Base):
+    """An immutable proposed roadmap. A new version supersedes the old one;
+    only an explicitly confirmed version may start guidance (ADR-010)."""
+
+    __tablename__ = "task_plans"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("owner_id", "session_id", "version"),
+        ForeignKeyConstraint(["owner_id", "task_id"], ["guide_tasks.owner_id", "guide_tasks.id"]),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"status IN {PLAN_STATUSES}", name="task_plans_status"),
+        CheckConstraint("version >= 1", name="task_plans_version"),
+    )
+    task_id: Mapped[str] = mapped_column(String(36), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(default="draft")
+    assumptions: Mapped[list] = mapped_column(JSON, default=list)
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    confirmed_by: Mapped[str | None] = mapped_column(String(36))
+    policy_version: Mapped[str] = mapped_column(default="development-1")
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class TaskStep(Owned, Base):
+    """One step definition owned by one plan version. The definition is immutable;
+    only the runtime columns (status, attempt_count, verified_at) change."""
+
+    __tablename__ = "task_steps"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("owner_id", "plan_id", "ordinal"),
+        # Steps cannot outlive their plan version: removing a plan removes them.
+        ForeignKeyConstraint(
+            ["owner_id", "plan_id"],
+            ["task_plans.owner_id", "task_plans.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint("ordinal >= 1 AND ordinal <= 12", name="task_steps_ordinal"),
+        CheckConstraint(f"status IN {STEP_STATUSES}", name="task_steps_status"),
+        CheckConstraint(f"risk IN {RISKS}", name="task_steps_risk"),
+        CheckConstraint(f"policy_disposition IN {DISPOSITIONS}", name="task_steps_disposition"),
+        CheckConstraint(f"evidence_kind IN {EVIDENCE_KINDS}", name="task_steps_evidence"),
+    )
+    plan_id: Mapped[str] = mapped_column(String(36), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    previous_step_id: Mapped[str | None] = mapped_column(String(36))
+    ordinal: Mapped[int]
+    title: Mapped[str] = mapped_column(String(120))
+    action: Mapped[str] = mapped_column(String(1000))
+    # Shown to the user; `success_criterion` is the condition the verifier tests.
+    expected_result: Mapped[str] = mapped_column(String(500), default="")
+    success_criterion: Mapped[str] = mapped_column(String(500))
+    fallback: Mapped[str] = mapped_column(String(500), default="")
+    explanation: Mapped[str] = mapped_column(String(1000), default="")
+    application_key: Mapped[str] = mapped_column(String(80))
+    risk: Mapped[str] = mapped_column(default="low")
+    policy_disposition: Mapped[str] = mapped_column(default="allow")
+    evidence_kind: Mapped[str] = mapped_column(default="visual")
+    required: Mapped[bool] = mapped_column(default=True)
+    status: Mapped[str] = mapped_column(default="pending")
+    attempt_count: Mapped[int] = mapped_column(default=0)
+    verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class ScreenshotRow(Owned, Base):

@@ -8,8 +8,10 @@ from sqlalchemy import select
 from app import models as m
 from app.errors import GuideError
 from app.guide.engine import record_event, transition
-from app.guide.guard import vet_analysis
-from app.guide.planner import context_for, persist
+from app.guide.guard import vet_analysis, vet_instruction
+from app.guide.planner import context_for, persist, steps_for
+from app.guide.steps import confirmed_plan, next_open_step, publish_instruction
+from app.providers.base import InstructionContext
 from app.schemas import Analysis
 from app.service import purge_image, usable
 
@@ -56,6 +58,67 @@ async def run_plan(app, db, pending, session, request_id: str) -> None:
         )
 
 
+async def run_instruction(app, db, pending, session, request_id: str) -> None:
+    """Role `instruct`: publish one action for the current step.
+
+    active -> processing -> instruction_ready -> awaiting_user_action, per doc 05.
+    The worker never marks a step done; only evidence or the user can speak to that.
+    """
+    try:
+        if pending.deadline_at <= m.now():
+            raise GuideError(503, "operation_timeout", "Preparing the step timed out.")
+        await transition(db, session, "processing", "instruction_requested", request_id)
+        plan = await confirmed_plan(db, session)
+        step = await next_open_step(db, plan)
+        if step is None:
+            pending.status = "succeeded"
+            session.current_step_id = None
+            await transition(db, session, "awaiting_user_action", "steps_exhausted", request_id)
+            await record_event(
+                db, session, "plan.steps_exhausted", request_id, {"plan_id": plan.id}
+            )
+            return
+        task = await db.get(m.GuideTask, pending.task_id)
+        provider = app.state.providers.select("instruct")
+        proposal = vet_instruction(
+            await asyncio.wait_for(
+                provider.instruct(
+                    InstructionContext(
+                        goal=task.goal,
+                        application_key=step.application_key,
+                        title=step.title,
+                        action=step.action,
+                        expected_result=step.expected_result,
+                        fallback=step.fallback,
+                        explanation=step.explanation,
+                        ordinal=step.ordinal,
+                        total_steps=len(await steps_for(db, plan)),
+                    )
+                ),
+                timeout=30,
+            )
+        )
+        instruction = await publish_instruction(db, session, step, proposal, request_id)
+        pending.result_ref = instruction.id
+        pending.status = "succeeded"
+        await transition(db, session, "instruction_ready", "instruction_ready", request_id)
+        await transition(db, session, "awaiting_user_action", "instruction_published", request_id)
+        step.status = "awaiting_user_action"
+        await record_event(db, session, "step.awaiting_action", request_id, {"step_id": step.id})
+        await record_event(
+            db, session, "operation.completed", request_id, {"operation_id": pending.id}
+        )
+    except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
+        pending.status = "failed"
+        pending.error_code = "dependency_unavailable"
+        await transition(
+            db, session, "blocked", "instruction_failed", request_id
+        )
+        await record_event(
+            db, session, "operation.failed", request_id, {"operation_id": pending.id}
+        )
+
+
 async def tick(app) -> None:
     async with app.state.sessions() as db, db.begin():
         pending = await db.scalar(
@@ -92,8 +155,9 @@ async def tick(app) -> None:
             return
         pending.status = "running"
         pending.attempt_count += 1
-        if pending.kind == "plan":
-            await run_plan(app, db, pending, session, request_id)
+        if pending.kind in {"plan", "instruct"}:
+            handler = run_plan if pending.kind == "plan" else run_instruction
+            await handler(app, db, pending, session, request_id)
             pending.completed_at = m.now()
             return
         try:

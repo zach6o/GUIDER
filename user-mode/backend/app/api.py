@@ -13,6 +13,13 @@ from app.auth import Db, Owner
 from app.errors import GuideError, not_found
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.planner import steps_for
+from app.guide.steps import (
+    confirmed_plan,
+    current_instruction,
+    owned_step,
+    record_claim,
+    skip_step,
+)
 from app.media import MAX_BYTES, normalize
 from app.service import (
     cancel_pending,
@@ -257,6 +264,140 @@ async def confirm_plan(
     )
     result = s.ConfirmedPlan(
         plan=await plan_view(db, plan), session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+def step_view(step: m.TaskStep) -> s.Step:
+    return s.Step.model_validate(step)
+
+
+@router.post("/sessions/{session_id}/start", status_code=202, response_model=s.Envelope[s.Pending])
+async def start_session(
+    session_id: UUID,
+    body: s.StartRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    # Nothing starts without an explicitly confirmed plan version (ADR-010).
+    plan = await confirmed_plan(db, session)
+    await quota(db, m.OperationRow, owner.id, 10, 60)
+    session.last_user_activity_at = m.now()
+    session.observation_mode = body.observation_mode
+    await transition(db, session, "active", "session_started", request.state.request_id)
+    await record_event(
+        db, session, "session.started", request.state.request_id, {"plan_id": plan.id}
+    )
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
+    return envelope(request, result)
+
+
+async def queue_instruction(db: Db, session: m.GuideSession, request_id: str) -> m.OperationRow:
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=session.owner_id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="instruct",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=digest({"step": session.current_step_id, "v": session.state_version}),
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(db, session, "operation.started", request_id, {"operation_id": operation.id})
+    return operation
+
+
+@router.get("/sessions/{session_id}/instruction", response_model=s.Envelope[s.CurrentInstruction])
+async def get_instruction(session_id: UUID, request: Request, db: Db, owner: Owner):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    instruction = await current_instruction(db, session)
+    if instruction is None:
+        raise not_found()
+    step = await owned_step(db, session, instruction.step_id)
+    return envelope(
+        request,
+        s.CurrentInstruction(
+            instruction=s.Instruction.model_validate(instruction),
+            step=step_view(step),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
+@router.post("/sessions/{session_id}/steps/{step_id}/claim", response_model=s.Envelope[s.Claimed])
+async def claim_step(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.ClaimRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    claim = await record_claim(db, session, step, body.statement, request.state.request_id)
+    session.last_user_activity_at = m.now()
+    # Same-state: a claim is not progress, so the session does not move.
+    await transition(db, session, session.state, "user_claimed", request.state.request_id)
+    result = s.Claimed(
+        claim_id=claim.id, step=step_view(step), session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.post("/sessions/{session_id}/steps/{step_id}/skip", response_model=s.Envelope[s.Skipped])
+async def skip(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.SkipRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    await skip_step(db, session, step, request.state.request_id)
+    session.last_user_activity_at = m.now()
+    # Doc 05 has no awaiting_user_action -> active row: preparing the next
+    # instruction is `processing`, the same route a retry or follow-up takes.
+    await transition(db, session, "processing", body.reason, request.state.request_id)
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Skipped(
+        step=step_view(step),
+        session=s.Session.model_validate(session),
+        next_operation_id=operation.id,
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
     return envelope(request, result)

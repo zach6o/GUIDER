@@ -19,6 +19,21 @@ jobs:
     defaults:
       run:
         working-directory: user-mode/backend
+    services:
+      # The Guide Engine relies on SELECT ... FOR UPDATE to serialize a single
+      # owner's mutations. SQLite ignores it, so the suite also runs here.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: guider
+          POSTGRES_PASSWORD: guider
+          POSTGRES_DB: guider_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
 
@@ -35,6 +50,11 @@ jobs:
         run: uv run ruff check app tests scripts migrations
 
       - name: Unit tests
+        run: uv run pytest -q
+
+      - name: Unit tests on PostgreSQL
+        env:
+          GUIDE_TEST_DATABASE_URL: postgresql+asyncpg://guider:guider@localhost:5432/guider_test
         run: uv run pytest -q
 
       - name: Apply migrations

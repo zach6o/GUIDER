@@ -7,10 +7,11 @@ from sqlalchemy import select
 
 from app import models as m
 from app.errors import GuideError
+from app.guide.engine import record_event, transition
 from app.guide.guard import vet_analysis
 from app.guide.planner import context_for, persist
 from app.schemas import Analysis
-from app.service import change, event, purge_image, usable
+from app.service import purge_image, usable
 
 
 async def run_plan(app, db, pending, session, request_id: str) -> None:
@@ -25,30 +26,34 @@ async def run_plan(app, db, pending, session, request_id: str) -> None:
         plan = await persist(db, session, task, proposal)
         pending.result_ref = plan.id
         pending.status = "succeeded"
-        await change(db, session, "plan_ready", "plan_ready", request_id)
-        await event(db, session, "plan.ready", request_id, {"plan_id": plan.id})
-        await change(
+        await transition(db, session, "plan_ready", "plan_ready", request_id)
+        await record_event(db, session, "plan.ready", request_id, {"plan_id": plan.id})
+        await transition(
             db, session, "awaiting_user_confirmation", "plan_published", request_id
         )
-        await event(
+        await record_event(
             db,
             session,
             "plan.confirmation_required",
             request_id,
             {"plan_id": plan.id, "version": plan.version},
         )
-        await event(db, session, "operation.completed", request_id, {"operation_id": pending.id})
+        await record_event(
+            db, session, "operation.completed", request_id, {"operation_id": pending.id}
+        )
     except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
         pending.status = "failed"
         pending.error_code = "dependency_unavailable"
-        await change(
+        await transition(
             db,
             session,
             session.checkpoint_state or "task_created",
             "plan_failed",
             request_id,
         )
-        await event(db, session, "operation.failed", request_id, {"operation_id": pending.id})
+        await record_event(
+            db, session, "operation.failed", request_id, {"operation_id": pending.id}
+        )
 
 
 async def tick(app) -> None:
@@ -77,7 +82,7 @@ async def tick(app) -> None:
         ):
             pending.status = "canceled"
             if session.state == "analyzing":
-                await change(
+                await transition(
                     db,
                     session,
                     session.checkpoint_state or "task_created",
@@ -134,7 +139,7 @@ async def tick(app) -> None:
             pending.result_ref = row.id
             pending.status = "succeeded"
             if session.state == "analyzing":
-                await change(
+                await transition(
                     db,
                     session,
                     session.checkpoint_state or "task_created",
@@ -142,23 +147,25 @@ async def tick(app) -> None:
                     request_id,
                 )
             else:
-                await change(db, session, session.state, "explanation_ready", request_id)
-            await event(db, session, "analysis.ready", request_id, {"analysis_id": row.id})
-            await event(
+                await transition(db, session, session.state, "explanation_ready", request_id)
+            await record_event(db, session, "analysis.ready", request_id, {"analysis_id": row.id})
+            await record_event(
                 db, session, "operation.completed", request_id, {"operation_id": pending.id}
             )
         except (GuideError, OSError, ValueError, TimeoutError):
             pending.status = "failed"
             pending.error_code = "dependency_unavailable"
             if session.state == "analyzing":
-                await change(
+                await transition(
                     db,
                     session,
                     session.checkpoint_state or "task_created",
                     "analysis_failed",
                     request_id,
                 )
-            await event(db, session, "operation.failed", request_id, {"operation_id": pending.id})
+            await record_event(
+                db, session, "operation.failed", request_id, {"operation_id": pending.id}
+            )
         pending.completed_at = m.now()
 
 

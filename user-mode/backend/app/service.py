@@ -10,11 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import models as m
 from app import schemas as s
 from app.errors import GuideError, not_found
-
-TERMINAL = {"completed", "failed", "expired"}
-ANALYSIS_STATES = {"task_created", "awaiting_user_confirmation", "paused", "blocked"}
-# A plan may be requested or regenerated from these, per the 05 transition table.
-PLAN_STATES = {"task_created", "plan_ready", "awaiting_user_confirmation", "paused", "blocked"}
+from app.guide.engine import TERMINAL, record_event, transition
 
 
 async def current_plan_version(db: AsyncSession, session: m.GuideSession) -> int | None:
@@ -49,64 +45,6 @@ def check_version(session: m.GuideSession, expected: int) -> None:
         )
     if session.state in TERMINAL:
         raise GuideError(409, "invalid_transition", "This session has ended.")
-
-
-async def event(
-    db: AsyncSession,
-    session: m.GuideSession,
-    kind: str,
-    request_id: str,
-    payload: dict | None = None,
-) -> None:
-    sequence = (
-        await db.scalar(
-            select(func.max(m.GuidanceEvent.sequence)).where(
-                m.GuidanceEvent.session_id == session.id,
-            )
-        )
-        or 0
-    ) + 1
-    db.add(
-        m.GuidanceEvent(
-            owner_id=session.owner_id,
-            session_id=session.id,
-            sequence=sequence,
-            state_version=session.state_version,
-            control_epoch=session.control_epoch,
-            type=kind,
-            request_id=request_id,
-            payload=payload or {},
-            expires_at=m.now() + timedelta(days=7),
-        )
-    )
-    await db.flush()
-
-
-async def change(
-    db: AsyncSession,
-    session: m.GuideSession,
-    target: str,
-    reason: str,
-    request_id: str,
-) -> None:
-    previous = session.state
-    session.state = target
-    session.state_version += 1
-    session.updated_at = m.now()
-    if previous != target:
-        await event(
-            db,
-            session,
-            "session.state_changed",
-            request_id,
-            {
-                "from": previous,
-                "to": target,
-                "reason": reason,
-                "state_version": session.state_version,
-                "control_epoch": session.control_epoch,
-            },
-        )
 
 
 def digest(body: Any, extra: bytes = b"") -> str:
@@ -250,8 +188,10 @@ async def purge_image(
                 if (session.state == "analyzing")
                 else session.state
             )
-            await change(db, session, target, "evidence_deleted", request_id)
-            await event(db, session, "data.deletion_requested", request_id, {"media_id": image.id})
+            await transition(db, session, target, "evidence_deleted", request_id)
+            await record_event(
+                db, session, "data.deletion_requested", request_id, {"media_id": image.id}
+            )
     records = await db.scalars(
         select(m.IdempotencyRecord).where(
             m.IdempotencyRecord.owner_id == image.owner_id,

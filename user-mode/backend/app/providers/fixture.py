@@ -12,7 +12,13 @@ from uuid import UUID, uuid4
 from PIL import Image, ImageDraw
 
 from app.media import normalize
-from app.providers.base import PlanContext, ProposedPlan, ProposedStep
+from app.providers.base import (
+    InstructionContext,
+    PlanContext,
+    ProposedInstruction,
+    ProposedPlan,
+    ProposedStep,
+)
 from app.schemas import Analysis, BBox, Observation
 
 
@@ -70,7 +76,7 @@ FIXTURE_PLAN = [
 class FixtureProvider:
     """A test double, not vision: exact fixture recognition, no external transmission.
 
-    Serves the `analyze` and `plan` roles. Neither reaches a network.
+    Serves the `analyze`, `plan` and `instruct` roles. None reaches a network.
     """
 
     def __init__(self):
@@ -85,6 +91,17 @@ class FixtureProvider:
             steps=[
                 ProposedStep(application_key=ctx.application_key, **step) for step in FIXTURE_PLAN
             ],
+        )
+
+    async def instruct(self, ctx: InstructionContext) -> ProposedInstruction:
+        """Restates the confirmed step as one action. A real writer would use the
+        current screen; this one deliberately invents nothing it cannot see."""
+        return ProposedInstruction(
+            what=ctx.action,
+            where=f"In {ctx.application_key.replace('_', ' ')}.",
+            why=ctx.explanation,
+            confirmation_hint=ctx.expected_result,
+            cannot_find_hint=ctx.fallback,
         )
 
     async def analyze(self, images: list[tuple[str, bytes]]) -> Analysis:

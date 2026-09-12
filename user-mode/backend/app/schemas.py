@@ -176,6 +176,57 @@ class ConfirmedPlan(Schema):
     session: Session
 
 
+class Instruction(Schema):
+    id: UUID
+    session_id: UUID
+    step_id: UUID
+    version: int
+    status: Literal["ready", "superseded", "invalidated"]
+    what: str
+    where: str
+    why: str | None
+    confirmation_hint: str
+    cannot_find_hint: str
+    created_at: datetime
+
+
+class CurrentInstruction(Schema):
+    instruction: Instruction
+    step: Step
+    session: Session
+
+
+class StartRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)]
+    observation_mode: Literal["screenshot_only"] = "screenshot_only"
+
+
+class ClaimRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)]
+    statement: Annotated[str, Field(max_length=1000)] = ""
+
+
+class SkipRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)]
+    reason: Literal["not_applicable", "already_done", "cannot_do"]
+
+
+class Claimed(Schema):
+    """A claim is the user's word. `verified` is always false here: only evidence
+    can verify a step, and that is a separate record (ADR-010)."""
+
+    claim_id: UUID
+    step: Step
+    session: Session
+    verified: Literal[False] = False
+
+
+class Skipped(Schema):
+    step: Step
+    session: Session
+    next_operation_id: UUID | None = None
+
+
 class AnalyzeRequest(Schema):
     session_id: UUID
     expected_version: Annotated[int, Field(ge=1)]
@@ -233,7 +284,7 @@ class ErrorEnvelope(Schema):
 
 class Operation(Schema):
     id: UUID
-    kind: Literal["analyze", "plan"]
+    kind: Literal["analyze", "plan", "instruct"]
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
     session_id: UUID | None
     result: Analysis | None

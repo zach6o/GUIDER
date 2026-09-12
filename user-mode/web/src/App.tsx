@@ -6,6 +6,10 @@ import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
 import { LiveGuide } from './LiveGuide';
 import { prepareImage } from './image';
+import { GuideIsland } from './overlay/GuideIsland';
+import { closeFloatingWindow, openFloatingWindow, pipSupported, type FloatingWindow } from './overlay/pip';
+import type { IslandState } from './overlay/states';
+import { guideReducer, initialGuideState } from './guide/engine';
 import type { Analysis, Category, Plan, Screenshot, Session, Task } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -30,6 +34,9 @@ export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [openStep, setOpenStep] = useState('');
+  const [guide, setGuide] = useState(initialGuideState);
+  const [guiding, setGuiding] = useState(false);
+  const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -55,6 +62,7 @@ export default function App() {
     void api.history().then(data => setHistory(data.items)).catch(() => {});
   }, [signedIn, page, task]);
   useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
 
   function navigate(next: Page) {
     if (busy) return;
@@ -151,13 +159,37 @@ export default function App() {
       throw new Error('Preparing the plan is taking too long. Try again in a moment.');
     });
   }
+  const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block')
+    .map(step => ({ id: step.id, target: step.title }));
+  // Finished means no current step: the island reports the outcome, not a step.
+  const activeStep = guide.phase === 'complete'
+    ? null : plan?.steps.find(step => step.id === guideSteps[guide.step]?.id) ?? null;
+  const islandState: IslandState = guide.phase === 'complete' ? 'finished'
+    : guide.paused ? 'idle' : guide.phase === 'checking' ? 'attention' : 'watching';
+
+  function guideDispatch(action: Parameters<typeof guideReducer>[2]) {
+    setGuide(current => guideReducer(guideSteps, current, action));
+  }
+  function stopGuiding() {
+    setGuiding(false);
+    setFloating((current: FloatingWindow | null) => { closeFloatingWindow(current); return null; });
+  }
+  async function startGuiding(floatingRequested = false) {
+    setGuide(initialGuideState);
+    setGuiding(true);
+    // The floating window is a deliberate choice, never the default: on the page
+    // is a supported shape, and it is the only one Safari and Firefox have.
+    if (!floatingRequested) return;
+    // Must stay inside the click: the window will not open after an await.
+    setFloating(await openFloatingWindow(() => { setFloating(null); setGuiding(false); }));
+  }
   async function confirmPlan() {
     if (!plan || !session) return;
     await work('Confirming the plan…', async () => {
       const current = await api.session(session.id);
       const confirmed = await api.confirmPlan(plan, current);
       setPlan(confirmed.plan); setSession(confirmed.session);
-      setNotice('Plan confirmed. Guidance for these steps arrives in a later release.');
+      setNotice('Plan confirmed. Start the steps whenever you are ready.');
     });
   }
   async function deleteImage() {
@@ -258,7 +290,7 @@ export default function App() {
           </li>)}</ol>
           <section className="plan-actions">
             {plan.status === 'confirmed'
-              ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><button className="text-button" disabled={!!busy} onClick={() => navigate('task')}>Back to the task <ArrowRight size={16} /></button></>
+              ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><div className="plan-buttons">{pipSupported() && <button className="text-button" disabled={!!busy || guiding} onClick={() => void startGuiding(true)}>Open in a floating window</button>}<button className="primary" disabled={!!busy || guiding} onClick={() => void startGuiding()}>{guiding ? 'Guide running' : 'Start the steps'} <ArrowRight size={16} /></button></div></>
               : <><div><strong>Happy with these steps?</strong><small>Confirming records the version. You can ask for a different plan instead.</small></div><div className="plan-buttons"><button className="text-button" disabled={!!busy} onClick={() => void buildPlan()}>Suggest a different plan</button><button className="primary" disabled={!!busy} onClick={() => void confirmPlan()}>{busy ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <>Confirm this plan <Check size={17} /></>}</button></div></>}
           </section>
           <p className="privacy-note"><ShieldCheck size={14} /> A plan is a suggestion. Guider never performs these steps for you.</p>
@@ -269,6 +301,22 @@ export default function App() {
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
     </div>
+    {guiding && plan && <GuideIsland
+      state={islandState}
+      step={activeStep}
+      ordinal={Math.min(guide.step + 1, guideSteps.length)}
+      total={guideSteps.length}
+      asking={guide.phase === 'checking'}
+      correction={guide.correction === 'missing_evidence'
+        ? 'That is not done yet. Try the step again, or skip it.' : ''}
+      paused={guide.paused}
+      mount={floating?.mount ?? null}
+      onClaim={() => guideDispatch({ type: 'act', target: activeStep?.id ?? '' })}
+      onAnswer={happened => guideDispatch({ type: 'verify', passed: happened })}
+      onTogglePause={() => guideDispatch({ type: guide.paused ? 'resume' : 'pause' })}
+      onSkip={() => { guideDispatch({ type: 'act', target: activeStep?.id ?? '' }); guideDispatch({ type: 'verify', passed: true }); }}
+      onClose={stopGuiding}
+    />}
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />
     {authOpen && <div className="modal-backdrop"><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
       if (codeSent) { const result = await supabase!.auth.verifyOtp({ email, token: code, type: 'email' }); if (result.error) throw result.error; setAuthOpen(false); setCode(''); setCodeSent(false); }

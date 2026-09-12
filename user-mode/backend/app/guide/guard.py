@@ -18,10 +18,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from app.errors import GuideError
 from app.schemas import Analysis
 
 if TYPE_CHECKING:  # The guard vets structures; it must not depend on adapters at runtime.
-    from app.providers.base import Guidance, ProposedStep
+    from app.providers.base import Guidance, ProposedInstruction, ProposedStep
 
 # The instruction sent to a provider. Advisory: a model may ignore it, which is
 # why RESTRICTED below exists as an independent deterministic check.
@@ -87,6 +88,20 @@ def step_policy(step: ProposedStep) -> tuple[str, str]:
     if restricted_action(step.action, step.fallback):
         return "block", "high"
     return "allow", step.risk
+
+
+def vet_instruction(instruction: ProposedInstruction) -> ProposedInstruction:
+    """Role `instruct`: an instruction directs the user, so `what`, `where` and
+    `cannot_find_hint` are vetted. A restricted action is refused outright rather
+    than softened: unlike a plan step, there is nothing here for the user to
+    review before acting. `why` and `confirmation_hint` are descriptive."""
+    if restricted_action(instruction.what, instruction.where, instruction.cannot_find_hint):
+        raise GuideError(
+            409,
+            "action_requires_review",
+            NEEDS_REVIEW,
+        )
+    return instruction
 
 
 def vet_analysis(analysis: Analysis) -> Analysis:

@@ -1,6 +1,8 @@
 # ADR-016 · Web-first guidance with tiered observation
 
-Date: 2026-09-12 · Status: proposed for v2; supersedes the observation trigger in [003](003-opt-in-observation.md), the MVP overlay surface in [006](006-floating-windows-overlay.md) and the native-client phase position in [014](014-initial-stack-and-contracts.md). Extends [015](015-browser-observation-and-personal-cloud.md) from a local exception to the product direction. Does not weaken [004](004-no-raw-video-storage.md), [005](005-guide-not-control.md) or [012](012-high-risk-action-gates.md).
+Date: 2026-09-12 · Status: **adopted** 2026-09-12 for the v2 architecture. Supersedes the observation trigger in [003](003-opt-in-observation.md), the MVP overlay surface in [006](006-floating-windows-overlay.md) and the native-client phase position in [014](014-initial-stack-and-contracts.md). Extends [015](015-browser-observation-and-personal-cloud.md) from a local exception to the product direction. Does not weaken [004](004-no-raw-video-storage.md), [005](005-guide-not-control.md) or [012](012-high-risk-action-gates.md).
+
+Adoption does not release the gates this decision itself sets. Continuous observation MUST NOT reach production until the D06 consent notice is approved and the `privacy_notice_version` bump ships, and until the native gates of [011](011-application-allowlisting.md) exist. `Settings.check()` remains shut. Tiers 0 and 1 are implemented and send nothing; see [19](../19-implementation-status.md).
 
 ## Context
 

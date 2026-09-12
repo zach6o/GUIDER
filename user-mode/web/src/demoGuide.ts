@@ -1,3 +1,5 @@
+import { guideReducer, initialGuideState, type GuideState } from './guide/engine';
+
 export const demoSteps = [
   { id: 'settings', title: 'Open Settings.', target: 'Settings', hint: 'Click Settings here',
     instruction: 'Click the highlighted Settings button in the practice window.',
@@ -14,44 +16,67 @@ export const demoSteps = [
 ] as const;
 
 export type DemoActionId = typeof demoSteps[number]['id'];
-export type DemoState = {
-  step: number; phase: 'ready' | 'checking' | 'complete'; paused: boolean; playing: boolean;
+/** Guide progression plus the practice app's own state. The engine owns the first
+ *  half and knows nothing about the second. */
+export type DemoState = GuideState & {
+  playing: boolean;
   page: 'workspace' | 'settings'; tab: 'general' | 'appearance'; theme: 'light' | 'dark';
-  saved: boolean; correction: string;
+  saved: boolean;
 };
 export const initialDemoState: DemoState = {
-  step: 0, phase: 'ready', paused: false, playing: false,
-  page: 'workspace', tab: 'general', theme: 'light', saved: false, correction: '',
+  ...initialGuideState, playing: false,
+  page: 'workspace', tab: 'general', theme: 'light', saved: false,
 };
 export type DemoAction = { type: 'act'; target: DemoActionId | 'other' }
   | { type: 'verify' | 'pause' | 'resume' | 'watch' | 'practice' | 'restart' };
 
+/** The sample change each step expects to see. This is the demo's evidence: the
+ *  engine never inspects it, it only receives the verdict. */
+function evidenceFor(state: DemoState): boolean {
+  return [
+    state.page === 'settings',
+    state.tab === 'appearance',
+    state.theme === 'dark',
+    state.saved && state.theme === 'dark',
+  ][state.step];
+}
+
+/** Engine corrections carry a reason, not copy. The demo supplies its own wording. */
+export function correctionText(state: DemoState): string {
+  if (state.correction === 'wrong_target') {
+    return `Try ${demoSteps[state.step].target}, marked by the green outline.`;
+  }
+  if (state.correction === 'missing_evidence') {
+    return 'The expected sample change is missing. Try the highlighted control again.';
+  }
+  return '';
+}
+
 export function demoReducer(state: DemoState, action: DemoAction): DemoState {
   switch (action.type) {
     case 'restart': return { ...initialDemoState };
-    case 'pause': return { ...state, paused: true };
-    case 'resume': return { ...state, paused: false };
     case 'practice': return { ...state, playing: false, paused: false };
     case 'watch': return state.phase === 'complete'
       ? { ...initialDemoState, playing: true } : { ...state, playing: true, paused: false };
+    case 'pause': return { ...state, ...guideReducer(demoSteps, state, { type: 'pause' }) };
+    case 'resume': return { ...state, ...guideReducer(demoSteps, state, { type: 'resume' }) };
     case 'act': {
-      if (state.paused || state.phase !== 'ready') return state;
-      if (action.target !== demoSteps[state.step].id) {
-        return { ...state, correction: `Try ${demoSteps[state.step].target}, marked by the green outline.` };
+      const next = { ...state, ...guideReducer(demoSteps, state, { type: 'act', target: action.target }) };
+      // The sample only changes when the engine accepted the action.
+      if (next.phase === 'checking' && state.phase !== 'checking') {
+        if (action.target === 'settings') next.page = 'settings';
+        if (action.target === 'appearance') next.tab = 'appearance';
+        if (action.target === 'dark') next.theme = 'dark';
+        if (action.target === 'save') next.saved = true;
       }
-      const next = { ...state, phase: 'checking' as const, correction: '' };
-      if (action.target === 'settings') next.page = 'settings';
-      if (action.target === 'appearance') next.tab = 'appearance';
-      if (action.target === 'dark') next.theme = 'dark';
-      if (action.target === 'save') next.saved = true;
       return next;
     }
     case 'verify': {
-      if (state.paused || state.phase !== 'checking') return state;
-      const evidence = [state.page === 'settings', state.tab === 'appearance', state.theme === 'dark', state.saved && state.theme === 'dark'];
-      if (!evidence[state.step]) return { ...state, phase: 'ready', correction: 'The expected sample change is missing. Try the highlighted control again.' };
-      if (state.step === demoSteps.length - 1) return { ...state, phase: 'complete', playing: false };
-      return { ...state, step: state.step + 1, phase: 'ready' };
+      const next = {
+        ...state, ...guideReducer(demoSteps, state, { type: 'verify', passed: evidenceFor(state) }),
+      };
+      // Playback stops itself at the end; the engine has no opinion on it.
+      return next.phase === 'complete' ? { ...next, playing: false } : next;
     }
   }
 }

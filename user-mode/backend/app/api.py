@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -11,22 +12,26 @@ from app import models as m
 from app import schemas as s
 from app.auth import Db, Owner
 from app.errors import GuideError, not_found
+from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.planner import steps_for
+from app.guide.steps import (
+    confirmed_plan,
+    current_instruction,
+    owned_step,
+    record_claim,
+    skip_step,
+)
 from app.media import MAX_BYTES, normalize
 from app.service import (
-    ANALYSIS_STATES,
-    PLAN_STATES,
-    TERMINAL,
     cancel_pending,
-    change,
     check_version,
     current_plan_version,
     digest,
-    event,
     operation_result,
     owned,
     purge_image,
     quota,
+    read_events,
     remember,
     replay,
     usable,
@@ -70,7 +75,7 @@ async def create_task(body: s.TaskCreate, request: Request, db: Db, owner: Owner
     db.add(session)
     await db.flush()
     task.current_session_id = session.id
-    await event(db, session, "task.created", request.state.request_id, {"task_id": task.id})
+    await record_event(db, session, "task.created", request.state.request_id, {"task_id": task.id})
     result = s.CreatedTask(
         task=s.Task.model_validate(task), session=s.Session.model_validate(session)
     )
@@ -186,7 +191,7 @@ async def request_plan(
     await quota(db, m.OperationRow, owner.id, 10, 60)
     session.last_user_activity_at = m.now()
     session.checkpoint_state = session.state
-    await change(db, session, "analyzing", "plan_requested", request.state.request_id)
+    await transition(db, session, "analyzing", "plan_requested", request.state.request_id)
     operation = m.OperationRow(
         id=m.new_id(),
         owner_id=owner.id,
@@ -201,7 +206,7 @@ async def request_plan(
     )
     db.add(operation)
     await db.flush()
-    await event(
+    await record_event(
         db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
     )
     result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
@@ -249,10 +254,10 @@ async def confirm_plan(
     session.confirmed_plan_version = plan.version
     session.last_user_activity_at = m.now()
     # Same-state command: version still advances, no session.state_changed event.
-    await change(
+    await transition(
         db, session, session.state, "plan_confirmed", request.state.request_id
     )
-    await event(
+    await record_event(
         db,
         session,
         "plan.confirmed",
@@ -264,6 +269,177 @@ async def confirm_plan(
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
     return envelope(request, result)
+
+
+def step_view(step: m.TaskStep) -> s.Step:
+    return s.Step.model_validate(step)
+
+
+@router.post("/sessions/{session_id}/start", status_code=202, response_model=s.Envelope[s.Pending])
+async def start_session(
+    session_id: UUID,
+    body: s.StartRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    # Nothing starts without an explicitly confirmed plan version (ADR-010).
+    plan = await confirmed_plan(db, session)
+    await quota(db, m.OperationRow, owner.id, 10, 60)
+    session.last_user_activity_at = m.now()
+    session.observation_mode = body.observation_mode
+    await transition(db, session, "active", "session_started", request.state.request_id)
+    await record_event(
+        db, session, "session.started", request.state.request_id, {"plan_id": plan.id}
+    )
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
+    return envelope(request, result)
+
+
+async def queue_instruction(db: Db, session: m.GuideSession, request_id: str) -> m.OperationRow:
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=session.owner_id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="instruct",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=digest({"step": session.current_step_id, "v": session.state_version}),
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(db, session, "operation.started", request_id, {"operation_id": operation.id})
+    return operation
+
+
+@router.get("/sessions/{session_id}/instruction", response_model=s.Envelope[s.CurrentInstruction])
+async def get_instruction(session_id: UUID, request: Request, db: Db, owner: Owner):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    instruction = await current_instruction(db, session)
+    if instruction is None:
+        raise not_found()
+    step = await owned_step(db, session, instruction.step_id)
+    return envelope(
+        request,
+        s.CurrentInstruction(
+            instruction=s.Instruction.model_validate(instruction),
+            step=step_view(step),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
+@router.post("/sessions/{session_id}/steps/{step_id}/claim", response_model=s.Envelope[s.Claimed])
+async def claim_step(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.ClaimRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    claim = await record_claim(db, session, step, body.statement, request.state.request_id)
+    session.last_user_activity_at = m.now()
+    # Same-state: a claim is not progress, so the session does not move.
+    await transition(db, session, session.state, "user_claimed", request.state.request_id)
+    result = s.Claimed(
+        claim_id=claim.id, step=step_view(step), session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.post("/sessions/{session_id}/steps/{step_id}/skip", response_model=s.Envelope[s.Skipped])
+async def skip(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.SkipRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    await skip_step(db, session, step, request.state.request_id)
+    session.last_user_activity_at = m.now()
+    # Doc 05 has no awaiting_user_action -> active row: preparing the next
+    # instruction is `processing`, the same route a retry or follow-up takes.
+    await transition(db, session, "processing", body.reason, request.state.request_id)
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Skipped(
+        step=step_view(step),
+        session=s.Session.model_validate(session),
+        next_operation_id=operation.id,
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+# A long poll, not a stream. GuidanceEvent.sequence is monotonic per session and
+# unique, so a client resumes at its exact cursor after any reconnect. SSE becomes
+# a transport swap later without changing this contract.
+MAX_WAIT_MS = 30_000
+POLL_INTERVAL_SECONDS = 0.4
+
+
+@router.get("/sessions/{session_id}/events", response_model=s.Envelope[s.EventPage])
+async def events(
+    session_id: UUID,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    after: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    wait_ms: Annotated[int, Query(ge=0, le=MAX_WAIT_MS)] = 0,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    rows = await read_events(db, session, after, limit)
+    if not rows and wait_ms:
+        # Never hold a transaction open while waiting: a reader parked for
+        # thirty seconds would block the worker behind it.
+        await db.commit()
+        deadline = time.monotonic() + wait_ms / 1000
+        while not rows and time.monotonic() < deadline:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            async with request.app.state.sessions() as poll:
+                rows = await read_events(poll, session, after, limit)
+    return envelope(
+        request,
+        s.EventPage(
+            items=[s.Event.model_validate(row) for row in rows],
+            next_after=rows[-1].sequence if rows else after,
+        ),
+    )
 
 
 @router.post("/tasks/{task_id}/screenshots", status_code=201, response_model=s.Envelope[s.Uploaded])
@@ -342,8 +518,8 @@ async def upload(
             await purge_image(db, storage, replacement, request.state.request_id)
         if session:
             session.last_user_activity_at = m.now()
-            await change(db, session, session.state, "manual_upload", request.state.request_id)
-            await event(
+            await transition(db, session, session.state, "manual_upload", request.state.request_id)
+            await record_event(
                 db,
                 session,
                 "screenshot.accepted",
@@ -460,9 +636,9 @@ async def analyze(
         raise GuideError(429, "session_budget_exhausted", "This session's analysis budget is used.")
     if session.state not in {"paused", "blocked"}:
         session.checkpoint_state = session.state
-        await change(db, session, "analyzing", "analysis_requested", request.state.request_id)
+        await transition(db, session, "analyzing", "analysis_requested", request.state.request_id)
     else:
-        await change(db, session, session.state, "analysis_requested", request.state.request_id)
+        await transition(db, session, session.state, "analysis_requested", request.state.request_id)
     session.last_user_activity_at = m.now()
     operation = m.OperationRow(
         id=m.new_id(),
@@ -486,7 +662,7 @@ async def analyze(
                 version=image.version,
             )
         )
-    await event(
+    await record_event(
         db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
     )
     result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
@@ -516,10 +692,10 @@ async def restrict(
         if stop:
             session.outcome = "stopped"
             session.ended_at = m.now()
-            await change(db, session, "stopping", body.reason, request.state.request_id)
-            await change(db, session, "completed", body.reason, request.state.request_id)
+            await transition(db, session, "stopping", body.reason, request.state.request_id)
+            await transition(db, session, "completed", body.reason, request.state.request_id)
         else:
-            await change(db, session, "paused", body.reason, request.state.request_id)
+            await transition(db, session, "paused", body.reason, request.state.request_id)
     result = s.Session.model_validate(session)
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
     return envelope(request, result)

@@ -207,6 +207,57 @@
         ],
         "title": "CheckInput"
       },
+      "ClaimRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "statement": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Statement",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "ClaimRequest"
+      },
+      "Claimed": {
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Claim Id"
+          },
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "verified": {
+            "type": "boolean",
+            "const": false,
+            "title": "Verified",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "claim_id",
+          "step",
+          "session"
+        ],
+        "title": "Claimed",
+        "description": "A claim is the user's word. `verified` is always false here: only evidence\ncan verify a step, and that is a separate record (ADR-010)."
+      },
       "ConfirmRequest": {
         "properties": {
           "expected_version": {
@@ -323,6 +374,27 @@
         ],
         "title": "CreatedTask"
       },
+      "CurrentInstruction": {
+        "properties": {
+          "instruction": {
+            "$ref": "#/components/schemas/Instruction"
+          },
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instruction",
+          "step",
+          "session"
+        ],
+        "title": "CurrentInstruction"
+      },
       "DeletionReceipt": {
         "properties": {
           "id": {
@@ -393,6 +465,25 @@
         ],
         "title": "DeletionReceipt"
       },
+      "Envelope_Claimed_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Claimed"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Claimed]"
+      },
       "Envelope_ConfirmedPlan_": {
         "properties": {
           "data": {
@@ -431,6 +522,25 @@
         ],
         "title": "Envelope[CreatedTask]"
       },
+      "Envelope_CurrentInstruction_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CurrentInstruction"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[CurrentInstruction]"
+      },
       "Envelope_DeletionReceipt_": {
         "properties": {
           "data": {
@@ -449,6 +559,25 @@
           "request_id"
         ],
         "title": "Envelope[DeletionReceipt]"
+      },
+      "Envelope_EventPage_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EventPage"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[EventPage]"
       },
       "Envelope_Operation_": {
         "properties": {
@@ -544,6 +673,25 @@
           "request_id"
         ],
         "title": "Envelope[Session]"
+      },
+      "Envelope_Skipped_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Skipped"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Skipped]"
       },
       "Envelope_Task_": {
         "properties": {
@@ -655,6 +803,70 @@
         ],
         "title": "ErrorEnvelope"
       },
+      "Event": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "state_version": {
+            "type": "integer",
+            "title": "State Version"
+          },
+          "control_epoch": {
+            "type": "integer",
+            "title": "Control Epoch"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sequence",
+          "state_version",
+          "control_epoch",
+          "type",
+          "payload",
+          "created_at"
+        ],
+        "title": "Event",
+        "description": "One entry in the session's ordered, content-free history."
+      },
+      "EventPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_after": {
+            "type": "integer",
+            "title": "Next After"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "next_after"
+        ],
+        "title": "EventPage"
+      },
       "Guidance": {
         "properties": {
           "observation": {
@@ -718,6 +930,86 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "Instruction": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "superseded",
+              "invalidated"
+            ],
+            "title": "Status"
+          },
+          "what": {
+            "type": "string",
+            "title": "What"
+          },
+          "where": {
+            "type": "string",
+            "title": "Where"
+          },
+          "why": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Why"
+          },
+          "confirmation_hint": {
+            "type": "string",
+            "title": "Confirmation Hint"
+          },
+          "cannot_find_hint": {
+            "type": "string",
+            "title": "Cannot Find Hint"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "step_id",
+          "version",
+          "status",
+          "what",
+          "where",
+          "why",
+          "confirmation_hint",
+          "cannot_find_hint",
+          "created_at"
+        ],
+        "title": "Instruction"
+      },
       "Observation": {
         "properties": {
           "label": {
@@ -763,7 +1055,8 @@
             "type": "string",
             "enum": [
               "analyze",
-              "plan"
+              "plan",
+              "instruct"
             ],
             "title": "Kind"
           },
@@ -1346,6 +1639,81 @@
           "expired"
         ],
         "title": "SessionState"
+      },
+      "SkipRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "not_applicable",
+              "already_done",
+              "cannot_do"
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "reason"
+        ],
+        "title": "SkipRequest"
+      },
+      "Skipped": {
+        "properties": {
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "next_operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step",
+          "session"
+        ],
+        "title": "Skipped"
+      },
+      "StartRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "observation_mode": {
+            "type": "string",
+            "const": "screenshot_only",
+            "title": "Observation Mode",
+            "default": "screenshot_only"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "StartRequest"
       },
       "Step": {
         "properties": {

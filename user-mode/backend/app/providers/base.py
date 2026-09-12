@@ -5,7 +5,7 @@ Adapters implement bounded roles and return validated structures, never free tex
 Selection is by role and capability; a provider name must not be compared outside
 this package.
 
-The `analyze`, `guide` and `plan` roles below are the ones that exist today. The
+The `analyze`, `guide`, `plan` and `instruct` roles below exist today. The
 remaining roles in `Role` are declared so the registry and descriptors are ready
 for them; their Protocols land with the phase that implements them, because a
 Protocol no adapter satisfies is fiction.
@@ -72,6 +72,31 @@ class ProposedPlan(Schema):
     steps: list[ProposedStep] = Field(min_length=1, max_length=12)
 
 
+class InstructionContext(Schema):
+    """What an instruction writer may see: the confirmed step and the goal it
+    serves. No account data, and no screen content until observation exists."""
+
+    goal: str = Field(min_length=1, max_length=4000)
+    application_key: str = Field(max_length=80)
+    title: str = Field(min_length=1, max_length=120)
+    action: str = Field(min_length=1, max_length=1000)
+    expected_result: str = Field(max_length=500)
+    fallback: str = Field(max_length=500)
+    explanation: str = Field(max_length=1000)
+    ordinal: int = Field(ge=1, le=12)
+    total_steps: int = Field(ge=1, le=12)
+
+
+class ProposedInstruction(Schema):
+    """One action the user performs. The writer cannot advance the step."""
+
+    what: str = Field(min_length=1, max_length=1000)
+    where: str = Field(max_length=300)
+    why: str = Field(max_length=500)
+    confirmation_hint: str = Field(max_length=300)
+    cannot_find_hint: str = Field(max_length=300)
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """What an adapter can do. The registry selects on this, never on `id`."""
@@ -101,6 +126,13 @@ class Planner(Protocol):
     widen the task or application scope (see doc 12, agent responsibilities)."""
 
     async def plan(self, ctx: PlanContext) -> ProposedPlan: ...
+
+
+class InstructionWriter(Protocol):
+    """Role `instruct`: one confirmed step to one validated instruction. Cannot
+    advance the step or issue a blocked final action (doc 12)."""
+
+    async def instruct(self, ctx: InstructionContext) -> ProposedInstruction: ...
 
 
 class LiveGuidanceProvider(Protocol):

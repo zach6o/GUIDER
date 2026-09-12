@@ -26,6 +26,8 @@ STEP_STATUSES = (
     "skipped",
     "superseded",
 )
+INSTRUCTION_STATUSES = ("ready", "superseded", "invalidated")
+CLAIM_STATUSES = ("user_claimed", "superseded")
 RISKS = ("low", "medium", "high")
 DISPOSITIONS = ("allow", "confirm", "block")
 EVIDENCE_KINDS = ("visual", "text", "self_report")
@@ -179,6 +181,67 @@ class TaskStep(Owned, Base):
     status: Mapped[str] = mapped_column(default="pending")
     attempt_count: Mapped[int] = mapped_column(default=0)
     verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class Instruction(Owned, Base):
+    """One action for one step. Only one instruction per session is current."""
+
+    __tablename__ = "instructions"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("owner_id", "step_id", "version"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "step_id"],
+            ["task_steps.owner_id", "task_steps.id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(f"status IN {INSTRUCTION_STATUSES}", name="instructions_status"),
+        CheckConstraint("version >= 1", name="instructions_version"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str] = mapped_column(String(36), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(default="ready")
+    what: Mapped[str] = mapped_column(String(1000))
+    # Quoted by SQLAlchemy: `where` is reserved in SQL.
+    where: Mapped[str] = mapped_column(String(300), default="")
+    why: Mapped[str | None] = mapped_column(String(500))
+    confirmation_hint: Mapped[str] = mapped_column(String(300), default="")
+    cannot_find_hint: Mapped[str] = mapped_column(String(300), default="")
+    pointer: Mapped[dict | None] = mapped_column(JSON)
+    control_epoch: Mapped[int] = mapped_column(BigInteger, default=1)
+    evidence_available: Mapped[bool] = mapped_column(default=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
+class CompletionClaim(Owned, Base):
+    """The user's word that a step is done. Not a verification result, and never
+    treated as one (ADR-010)."""
+
+    __tablename__ = "completion_claims"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "step_id"],
+            ["task_steps.owner_id", "task_steps.id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(f"status IN {CLAIM_STATUSES}", name="completion_claims_status"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str] = mapped_column(String(36), index=True)
+    statement: Mapped[str] = mapped_column(String(1000), default="")
+    status: Mapped[str] = mapped_column(default="user_claimed")
+    instruction_version: Mapped[int]
+    claimed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
 
 
 class ScreenshotRow(Owned, Base):

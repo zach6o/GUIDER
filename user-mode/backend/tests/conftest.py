@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -14,11 +15,18 @@ ALICE = "54d332b0-9948-42c8-94dd-11a913c79719"
 BOB = "f2bf182e-f619-492b-a1cc-c10cf660ca64"
 
 
+# Set GUIDE_TEST_DATABASE_URL to run the suite against PostgreSQL. SQLite is the
+# default, but it ignores SELECT ... FOR UPDATE, so the engine's per-owner
+# serialization is only genuinely exercised under PostgreSQL.
+POSTGRES_URL = os.environ.get("GUIDE_TEST_DATABASE_URL", "")
+on_postgres = pytest.mark.skipif(not POSTGRES_URL, reason="Needs GUIDE_TEST_DATABASE_URL")
+
+
 @pytest.fixture
 async def harness(tmp_path):
     settings = Settings(
         environment="test",
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        database_url=POSTGRES_URL or f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         storage_path=tmp_path / "media",
         supabase_url="https://fixture.supabase.co",
     )
@@ -42,6 +50,9 @@ async def harness(tmp_path):
         return jwt.encode(claims, private_key, algorithm="ES256", headers={"kid": "fixture"})
 
     async with app.state.engine.begin() as connection:
+        # A shared PostgreSQL database is reused between tests; start each one clean.
+        if POSTGRES_URL:
+            await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {token()}"

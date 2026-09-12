@@ -560,6 +560,25 @@
         ],
         "title": "Envelope[DeletionReceipt]"
       },
+      "Envelope_EventPage_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EventPage"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[EventPage]"
+      },
       "Envelope_Operation_": {
         "properties": {
           "data": {
@@ -783,6 +802,70 @@
           "request_id"
         ],
         "title": "ErrorEnvelope"
+      },
+      "Event": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "state_version": {
+            "type": "integer",
+            "title": "State Version"
+          },
+          "control_epoch": {
+            "type": "integer",
+            "title": "Control Epoch"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sequence",
+          "state_version",
+          "control_epoch",
+          "type",
+          "payload",
+          "created_at"
+        ],
+        "title": "Event",
+        "description": "One entry in the session's ordered, content-free history."
+      },
+      "EventPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_after": {
+            "type": "integer",
+            "title": "Next After"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "next_after"
+        ],
+        "title": "EventPage"
       },
       "Guidance": {
         "properties": {

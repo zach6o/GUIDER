@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -30,6 +31,7 @@ from app.service import (
     owned,
     purge_image,
     quota,
+    read_events,
     remember,
     replay,
     usable,
@@ -401,6 +403,43 @@ async def skip(
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
     return envelope(request, result)
+
+
+# A long poll, not a stream. GuidanceEvent.sequence is monotonic per session and
+# unique, so a client resumes at its exact cursor after any reconnect. SSE becomes
+# a transport swap later without changing this contract.
+MAX_WAIT_MS = 30_000
+POLL_INTERVAL_SECONDS = 0.4
+
+
+@router.get("/sessions/{session_id}/events", response_model=s.Envelope[s.EventPage])
+async def events(
+    session_id: UUID,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    after: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    wait_ms: Annotated[int, Query(ge=0, le=MAX_WAIT_MS)] = 0,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    rows = await read_events(db, session, after, limit)
+    if not rows and wait_ms:
+        # Never hold a transaction open while waiting: a reader parked for
+        # thirty seconds would block the worker behind it.
+        await db.commit()
+        deadline = time.monotonic() + wait_ms / 1000
+        while not rows and time.monotonic() < deadline:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            async with request.app.state.sessions() as poll:
+                rows = await read_events(poll, session, after, limit)
+    return envelope(
+        request,
+        s.EventPage(
+            items=[s.Event.model_validate(row) for row in rows],
+            next_after=rows[-1].sequence if rows else after,
+        ),
+    )
 
 
 @router.post("/tasks/{task_id}/screenshots", status_code=201, response_model=s.Envelope[s.Uploaded])

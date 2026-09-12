@@ -223,6 +223,30 @@ async def purge_image(
     return receipt
 
 
+async def read_events(
+    db: AsyncSession,
+    session: m.GuideSession,
+    after: int,
+    limit: int,
+) -> list[m.GuidanceEvent]:
+    """Events after `after`, in order. Expired entries are skipped rather than
+    reported, so a client that was away longer than the retention window resumes
+    from what still exists instead of stalling on a gap it can never fill."""
+    return list(
+        await db.scalars(
+            select(m.GuidanceEvent)
+            .where(
+                m.GuidanceEvent.owner_id == session.owner_id,
+                m.GuidanceEvent.session_id == session.id,
+                m.GuidanceEvent.sequence > after,
+                m.GuidanceEvent.expires_at > m.now(),
+            )
+            .order_by(m.GuidanceEvent.sequence)
+            .limit(limit)
+        )
+    )
+
+
 async def operation_result(db: AsyncSession, row: m.OperationRow) -> s.Operation:
     result = None
     if row.expires_at <= m.now():

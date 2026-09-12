@@ -227,6 +227,23 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class Event(Schema):
+    """One entry in the session's ordered, content-free history."""
+
+    sequence: int
+    state_version: int
+    control_epoch: int
+    type: str
+    payload: dict
+    created_at: datetime
+
+
+class EventPage(Schema):
+    items: list[Event]
+    # Pass back as `after` to resume exactly here. Stable across reconnects.
+    next_after: int
+
+
 class AnalyzeRequest(Schema):
     session_id: UUID
     expected_version: Annotated[int, Field(ge=1)]

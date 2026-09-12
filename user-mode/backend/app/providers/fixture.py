@@ -14,6 +14,8 @@ from PIL import Image, ImageDraw
 from app.media import normalize
 from app.providers.base import (
     InstructionContext,
+    ObserveContext,
+    ObserveResult,
     PlanContext,
     ProposedInstruction,
     ProposedPlan,
@@ -76,7 +78,7 @@ FIXTURE_PLAN = [
 class FixtureProvider:
     """A test double, not vision: exact fixture recognition, no external transmission.
 
-    Serves the `analyze`, `plan` and `instruct` roles. None reaches a network.
+    Serves the `analyze`, `plan`, `instruct` and `observe` roles. None reaches a network.
     """
 
     def __init__(self):
@@ -102,6 +104,18 @@ class FixtureProvider:
             why=ctx.explanation,
             confirmation_hint=ctx.expected_result,
             cannot_find_hint=ctx.fallback,
+        )
+
+    async def observe(self, ctx: ObserveContext, image: bytes) -> ObserveResult:
+        """Reads nothing. A fixture cannot see a screen, so it reports no evidence
+        rather than inventing a verdict, and confidence 0 never advances a step."""
+        return ObserveResult(
+            step_complete=False,
+            confidence=0.0,
+            app_visible=ctx.application_key[:80],
+            ui_changed=False,
+            anomaly="unreadable",
+            note="The development observer cannot read frames. No vision provider is configured.",
         )
 
     async def analyze(self, images: list[tuple[str, bytes]]) -> Analysis:

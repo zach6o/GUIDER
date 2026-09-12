@@ -244,6 +244,30 @@ class EventPage(Schema):
     next_after: int
 
 
+class ObserveRequest(Schema):
+    """One admitted frame. No idempotency key: a tick is not a command, and
+    replaying one would be meaningless. Rate limits protect it instead."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    image_base64: Annotated[str, Field(min_length=1, max_length=5_592_408)]
+    admitted_at: AwareDatetime
+
+
+class ObservationTick(Schema):
+    """What the tick earned. `advance` is the only decision that moves anything."""
+
+    decision: Literal["advance", "ask", "wait"]
+    confidence: Annotated[float, Field(ge=0, le=1)]
+    ui_changed: bool
+    anomaly: Literal[
+        "none", "different_os", "different_app", "outdated_ui", "error_dialog", "unreadable"
+    ]
+    note: str
+    frames_observed: int
+    observation_calls_remaining: int
+    session: Session
+
+
 class AnalyzeRequest(Schema):
     session_id: UUID
     expected_version: Annotated[int, Field(ge=1)]

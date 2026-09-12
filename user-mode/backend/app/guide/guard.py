@@ -22,7 +22,12 @@ from app.errors import GuideError
 from app.schemas import Analysis
 
 if TYPE_CHECKING:  # The guard vets structures; it must not depend on adapters at runtime.
-    from app.providers.base import Guidance, ProposedInstruction, ProposedStep
+    from app.providers.base import (
+        Guidance,
+        ObserveResult,
+        ProposedInstruction,
+        ProposedStep,
+    )
 
 # The instruction sent to a provider. Advisory: a model may ignore it, which is
 # why RESTRICTED below exists as an independent deterministic check.
@@ -102,6 +107,16 @@ def vet_instruction(instruction: ProposedInstruction) -> ProposedInstruction:
             NEEDS_REVIEW,
         )
     return instruction
+
+
+def vet_observation(result: ObserveResult) -> ObserveResult:
+    """Role `observe`: the schema carries no directive field, so an observer has
+    nowhere to put an instruction. `note` is the one free-text field, and a note
+    that turns into a directive is cleared rather than shown; the verdict itself
+    is evidence and survives."""
+    if restricted_action(result.note):
+        result.note = ""
+    return result
 
 
 def vet_analysis(analysis: Analysis) -> Analysis:

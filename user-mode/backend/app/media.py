@@ -63,6 +63,28 @@ def normalize(raw: bytes) -> NormalizedImage:
         raise GuideError(422, "image_unreadable", "This image could not be read safely.") from None
 
 
+MAX_FRAME_BYTES = 4 * 1024 * 1024
+MAX_FRAME_EDGE = 2560
+
+
+def prepare_frame(encoded: str) -> bytes:
+    """Decode one observed frame. Bounded like every other image path, and the
+    result is returned rather than stored: observation frames are never persisted."""
+    import base64
+    import binascii
+
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise GuideError(422, "image_unreadable", "Could not read this frame.") from None
+    if len(raw) > MAX_FRAME_BYTES:
+        raise GuideError(413, "payload_too_large", "Crop this frame to less than 4 MiB.")
+    clean = normalize(raw)
+    if max(clean.width, clean.height) > MAX_FRAME_EDGE or len(clean.pixels) > MAX_FRAME_BYTES:
+        raise GuideError(413, "payload_too_large", "Use at most 2,560 pixels per side.")
+    return clean.pixels
+
+
 class PrivateStorage(Protocol):
     async def put(self, pixels: bytes) -> str: ...
     async def read(self, key: str) -> bytes: ...

@@ -28,6 +28,14 @@ STEP_STATUSES = (
 )
 INSTRUCTION_STATUSES = ("ready", "superseded", "invalidated")
 CLAIM_STATUSES = ("user_claimed", "superseded")
+VERIFICATION_STATUSES = (
+    "pending",
+    "passed",
+    "mismatch",
+    "inconclusive",
+    "user_reported",
+    "canceled",
+)
 RISKS = ("low", "medium", "high")
 DISPOSITIONS = ("allow", "confirm", "block")
 EVIDENCE_KINDS = ("visual", "text", "self_report")
@@ -105,6 +113,13 @@ class GuideSession(Owned, Base):
     observation_mode: Mapped[str] = mapped_column(default="screenshot_only")
     outcome: Mapped[str | None]
     last_user_activity_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
+    # Observation accounting (ADR-016). Frames are never stored; only these counts.
+    observation_active: Mapped[bool] = mapped_column(default=False)
+    observation_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    frames_observed: Mapped[int] = mapped_column(default=0)
+    observation_calls: Mapped[int] = mapped_column(default=0)
+    reasoning_calls: Mapped[int] = mapped_column(default=0)
+    stuck_since: Mapped[datetime | None] = mapped_column(UTCDateTime)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -242,6 +257,39 @@ class CompletionClaim(Owned, Base):
     status: Mapped[str] = mapped_column(default="user_claimed")
     instruction_version: Mapped[int]
     claimed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
+
+
+class VerificationResult(Owned, Base):
+    """Evidence, as distinct from a claim. A step is `verified` only when one of
+    these says so; the user's word produces a CompletionClaim instead (ADR-010)."""
+
+    __tablename__ = "verification_results"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "step_id"],
+            ["task_steps.owner_id", "task_steps.id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(f"status IN {VERIFICATION_STATUSES}", name="verification_results_status"),
+        CheckConstraint(f"verifier_kind IN {EVIDENCE_KINDS}", name="verification_results_kind"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str] = mapped_column(String(36), index=True)
+    claim_id: Mapped[str | None] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(default="pending")
+    verifier_kind: Mapped[str] = mapped_column(default="visual")
+    reason: Mapped[str] = mapped_column(String(1000), default="")
+    observed_confidence: Mapped[float | None]
+    evidence_available: Mapped[bool] = mapped_column(default=True)
+    instruction_version: Mapped[int]
+    control_epoch: Mapped[int] = mapped_column(BigInteger, default=1)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
 class ScreenshotRow(Owned, Base):

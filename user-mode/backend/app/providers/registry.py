@@ -16,7 +16,7 @@ from app.providers.openai import OpenAIVision
 FIXTURE = CapabilityDescriptor(
     id="fixture",
     display_name="Deterministic fixture",
-    roles=frozenset({"analyze"}),
+    roles=frozenset({"analyze", "plan"}),
     vision=False,
     structured_output="none",
     max_image_px=8192,

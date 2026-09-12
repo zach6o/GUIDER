@@ -34,15 +34,17 @@ REMOTE = CapabilityDescriptor(
 def test_default_registry_selects_adapters_by_role():
     registry = default_registry()
     assert isinstance(registry.select("analyze"), FixtureProvider)
+    assert isinstance(registry.select("plan"), FixtureProvider)
     assert isinstance(registry.select("guide"), OpenAIVision)
 
 
 def test_unsatisfiable_role_fails_closed_without_naming_a_provider():
+    # `verify` has no adapter yet; it arrives with the phase that implements it.
     with pytest.raises(GuideError) as error:
-        default_registry().select("plan")
+        default_registry().select("verify")
     assert error.value.status == 503
     assert error.value.body["code"] == "dependency_unavailable"
-    assert "plan" not in error.value.body["message"]
+    assert "verify" not in error.value.body["message"]
 
 
 def test_selection_orders_on_capability_not_registration_name():

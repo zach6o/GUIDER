@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from app.schemas import Analysis
 
 if TYPE_CHECKING:  # The guard vets structures; it must not depend on adapters at runtime.
-    from app.providers.base import Guidance
+    from app.providers.base import Guidance, ProposedStep
 
 # The instruction sent to a provider. Advisory: a model may ignore it, which is
 # why RESTRICTED below exists as an independent deterministic check.
@@ -70,6 +70,23 @@ def vet_guidance(guidance: Guidance) -> Guidance:
     if guidance.disposition != "guide":
         guidance.next_step = guidance.where = guidance.check_for = ""
     return guidance
+
+
+def step_policy(step: ProposedStep) -> tuple[str, str]:
+    """Role `plan`: the guard's verdict on one proposed step, as
+    `(policy_disposition, risk)`.
+
+    A step whose directive proposes an unapprovable action is marked `block` rather
+    than dropped: the user still sees it while reviewing the plan, and a blocked step
+    cannot produce an instruction (ADR-012 — blocked categories stay blocked).
+    `expected_result` and `explanation` are descriptive and are not matched.
+
+    The verdict is not part of the provider's schema, so a planner cannot propose its
+    own disposition; the caller persists what this returns.
+    """
+    if restricted_action(step.action, step.fallback):
+        return "block", "high"
+    return "allow", step.risk
 
 
 def vet_analysis(analysis: Analysis) -> Analysis:

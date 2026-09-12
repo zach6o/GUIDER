@@ -119,6 +119,63 @@ class Uploaded(Schema):
     operation_id: UUID | None = None
 
 
+class Step(Schema):
+    id: UUID
+    ordinal: Annotated[int, Field(ge=1, le=12)]
+    title: str
+    action: str
+    expected_result: str
+    success_criterion: str
+    fallback: str
+    explanation: str
+    application_key: str
+    risk: Literal["low", "medium", "high"]
+    policy_disposition: Literal["allow", "confirm", "block"]
+    evidence_kind: Literal["visual", "text", "self_report"]
+    required: bool
+    status: Literal[
+        "pending",
+        "instruction_ready",
+        "awaiting_user_action",
+        "user_claimed",
+        "verified",
+        "blocked",
+        "skipped",
+        "superseded",
+    ]
+    attempt_count: int
+    verified_at: datetime | None
+
+
+class Plan(Schema):
+    id: UUID
+    task_id: UUID
+    session_id: UUID
+    version: int
+    status: Literal["draft", "confirmed", "superseded"]
+    assumptions: list[str]
+    policy_version: str
+    confirmed_at: datetime | None
+    steps: list[Step]
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlanRequest(Schema):
+    session_id: UUID
+    expected_version: Annotated[int, Field(ge=1)]
+
+
+class ConfirmRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)]
+    plan_version: Annotated[int, Field(ge=1)]
+
+
+class ConfirmedPlan(Schema):
+    plan: Plan
+    session: Session
+
+
 class AnalyzeRequest(Schema):
     session_id: UUID
     expected_version: Annotated[int, Field(ge=1)]
@@ -176,7 +233,7 @@ class ErrorEnvelope(Schema):
 
 class Operation(Schema):
     id: UUID
-    kind: Literal["analyze"]
+    kind: Literal["analyze", "plan"]
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
     session_id: UUID | None
     result: Analysis | None

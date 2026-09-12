@@ -11,13 +11,16 @@ from app import models as m
 from app import schemas as s
 from app.auth import Db, Owner
 from app.errors import GuideError, not_found
+from app.guide.planner import steps_for
 from app.media import MAX_BYTES, normalize
 from app.service import (
     ANALYSIS_STATES,
+    PLAN_STATES,
     TERMINAL,
     cancel_pending,
     change,
     check_version,
+    current_plan_version,
     digest,
     event,
     operation_result,
@@ -135,6 +138,132 @@ async def sessions(
             next_cursor=rows[limit - 1][0].id if len(rows) > limit else None,
         ),
     )
+
+
+async def plan_view(db: Db, plan: m.TaskPlan) -> s.Plan:
+    return s.Plan(
+        id=plan.id,
+        task_id=plan.task_id,
+        session_id=plan.session_id,
+        version=plan.version,
+        status=plan.status,
+        assumptions=plan.assumptions,
+        policy_version=plan.policy_version,
+        confirmed_at=plan.confirmed_at,
+        steps=[s.Step.model_validate(step) for step in await steps_for(db, plan)],
+        created_at=plan.created_at,
+        updated_at=plan.updated_at,
+    )
+
+
+@router.post("/tasks/{task_id}/plans", status_code=202, response_model=s.Envelope[s.Pending])
+async def request_plan(
+    task_id: UUID,
+    body: s.PlanRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    task = await owned(db, m.GuideTask, str(task_id), owner.id)
+    session = await owned(db, m.GuideSession, str(body.session_id), owner.id)
+    if session.task_id != task.id:
+        raise not_found()
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state not in PLAN_STATES:
+        raise GuideError(409, "invalid_transition", "Finish the current operation first.")
+    if await db.scalar(
+        select(m.OperationRow.id).where(
+            m.OperationRow.session_id == session.id,
+            m.OperationRow.status.in_(["queued", "running"]),
+        )
+    ):
+        raise GuideError(409, "operation_in_progress", "An operation is already running.")
+    await quota(db, m.OperationRow, owner.id, 10, 60)
+    session.last_user_activity_at = m.now()
+    session.checkpoint_state = session.state
+    await change(db, session, "analyzing", "plan_requested", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        session_id=session.id,
+        kind="plan",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await event(
+        db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
+    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
+    return envelope(request, result)
+
+
+@router.get("/plans/{plan_id}", response_model=s.Envelope[s.Plan])
+async def get_plan(plan_id: UUID, request: Request, db: Db, owner: Owner):
+    plan = await owned(db, m.TaskPlan, str(plan_id), owner.id)
+    return envelope(request, await plan_view(db, plan))
+
+
+@router.post("/plans/{plan_id}/confirm", response_model=s.Envelope[s.ConfirmedPlan])
+async def confirm_plan(
+    plan_id: UUID,
+    body: s.ConfirmRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    plan = await owned(db, m.TaskPlan, str(plan_id), owner.id)
+    session = await owned(db, m.GuideSession, plan.session_id, owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    # Confirmation binds one exact version. A superseded plan cannot start.
+    if plan.status == "superseded" or plan.version != body.plan_version:
+        raise GuideError(
+            409,
+            "stale_version",
+            "This plan was replaced. Review the current plan before starting.",
+            details={"current_version": await current_plan_version(db, session)},
+        )
+    if session.state != "awaiting_user_confirmation":
+        raise GuideError(409, "invalid_transition", "This plan is not awaiting confirmation.")
+    if plan.status == "draft":
+        plan.status = "confirmed"
+        plan.confirmed_at = m.now()
+        plan.confirmed_by = owner.id
+        plan.updated_at = m.now()
+    session.confirmed_plan_version = plan.version
+    session.last_user_activity_at = m.now()
+    # Same-state command: version still advances, no session.state_changed event.
+    await change(
+        db, session, session.state, "plan_confirmed", request.state.request_id
+    )
+    await event(
+        db,
+        session,
+        "plan.confirmed",
+        request.state.request_id,
+        {"plan_id": plan.id, "version": plan.version},
+    )
+    result = s.ConfirmedPlan(
+        plan=await plan_view(db, plan), session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
 
 
 @router.post("/tasks/{task_id}/screenshots", status_code=201, response_model=s.Envelope[s.Uploaded])

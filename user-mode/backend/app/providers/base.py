@@ -1,0 +1,100 @@
+"""Provider-facing role contracts and capability descriptors.
+
+Adapters implement bounded roles and return validated structures, never free text
+([ADR-017](../../../../docs/user-mode-guide/adr/017-provider-role-abstraction.md)).
+Selection is by role and capability; a provider name must not be compared outside
+this package.
+
+The `analyze` and `guide` roles below are the two that exist today. The remaining
+roles in `Role` are declared so the registry and descriptors are ready for them;
+their Protocols land with the phase that implements them, because a Protocol no
+adapter satisfies is fiction.
+"""
+
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from pydantic import Field, SecretStr
+
+from app.errors import GuideError
+from app.schemas import Analysis, Schema
+
+MODEL = Literal["gpt-4.1-mini", "gpt-4.1"]
+MAX_IMAGE = 4 * 1024 * 1024
+
+Role = Literal["analyze", "guide", "observe", "plan", "instruct", "verify", "import"]
+StructuredOutput = Literal["json_schema", "tool", "native", "prompt", "none"]
+CostTier = Literal["cheap", "standard", "capable"]
+
+
+class CheckInput(Schema):
+    goal: str = Field(min_length=1, max_length=4000)
+    question: str = Field(max_length=1000)
+    previous_step: str = Field(max_length=1000)
+    image_base64: str = Field(min_length=1, max_length=5_592_408)
+    reviewed: Literal[True]
+
+
+class Guidance(Schema):
+    observation: str = Field(min_length=1, max_length=1600)
+    next_step: str = Field(max_length=1000)
+    where: str = Field(max_length=500)
+    check_for: str = Field(max_length=500)
+    question: str = Field(max_length=500)
+    disposition: Literal["guide", "needs_context", "blocked"]
+
+
+@dataclass(frozen=True)
+class CapabilityDescriptor:
+    """What an adapter can do. The registry selects on this, never on `id`."""
+
+    id: str
+    display_name: str
+    roles: frozenset[Role]
+    vision: bool
+    structured_output: StructuredOutput
+    max_image_px: int
+    cost_tier: CostTier
+    byok_only: bool
+    local: bool
+
+    def supports(self, role: Role) -> bool:
+        return role in self.roles
+
+
+class AnalysisProvider(Protocol):
+    """Role `analyze`: owned account evidence to a validated explanation."""
+
+    async def analyze(self, images: list[tuple[str, bytes]]) -> Analysis: ...
+
+
+class LiveGuidanceProvider(Protocol):
+    """Role `guide`: one reviewed frame to one validated next step, under a
+    caller-supplied credential that this process never persists."""
+
+    async def validate(self, key: SecretStr, model: str) -> None: ...
+
+    async def analyze(
+        self, key: SecretStr, model: str, body: CheckInput, image: bytes
+    ) -> Guidance: ...
+
+
+def provider_error(status: int) -> GuideError:
+    if status in {401, 403}:
+        return GuideError(
+            401, "openai_key_rejected", "OpenAI rejected this key or its permissions."
+        )
+    if status == 429:
+        return GuideError(
+            429,
+            "openai_limit",
+            "OpenAI's usage limit was reached. Check your API billing and limits.",
+        )
+    if status == 404:
+        return GuideError(422, "model_unavailable", "This model is not available for your API key.")
+    return GuideError(
+        503,
+        "openai_unavailable",
+        "OpenAI could not complete this request. Try again.",
+        retryable=True,
+    )

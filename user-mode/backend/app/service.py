@@ -287,7 +287,9 @@ async def operation_result(db: AsyncSession, row: m.OperationRow) -> s.Operation
     result = None
     if row.expires_at <= m.now():
         raise GuideError(410, "data_deleted", "This operation result has expired.")
-    if row.result_ref:
+    # Only the analyze role stores an inline result. A plan operation points at a
+    # plan the client fetches separately, so do not look for an AnalysisRow.
+    if row.kind == "analyze" and row.result_ref:
         analysis = await db.get(m.AnalysisRow, row.result_ref)
         if analysis and analysis.expires_at > m.now():
             ids = list(
@@ -309,10 +311,11 @@ async def operation_result(db: AsyncSession, row: m.OperationRow) -> s.Operation
             raise GuideError(410, "media_expired", "The source evidence has expired.")
     return s.Operation(
         id=row.id,
-        kind="analyze",
+        kind=row.kind,
         status=row.status,
         session_id=row.session_id,
         result=result,
+        result_id=row.result_ref,
         error=s.ErrorBody(
             code=row.error_code,
             message="The analysis is unavailable. Try fresh evidence.",

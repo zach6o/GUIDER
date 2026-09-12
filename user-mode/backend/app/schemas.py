@@ -237,6 +237,9 @@ class Operation(Schema):
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
     session_id: UUID | None
     result: Analysis | None
+    # What the operation produced, when the result is fetched by its own route.
+    # A plan operation carries the plan id here and leaves `result` empty.
+    result_id: UUID | None = None
     error: ErrorBody | None
     created_at: datetime
     updated_at: datetime

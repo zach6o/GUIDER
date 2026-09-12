@@ -17,7 +17,9 @@ class Settings(BaseSettings):
         if self.environment == "production":
             raise RuntimeError(
                 "Production is gated: storage encryption, isolated decoding, provider review, "
-                "distributed quotas and lifecycle certification are not complete."
+                "distributed quotas and lifecycle certification are not complete. "
+                "Continuous observation additionally requires the approved consent notice "
+                "(D06) and the native application gates of ADR-011."
             )
         if self.supabase_url and (
             not self.supabase_url.startswith("https://")

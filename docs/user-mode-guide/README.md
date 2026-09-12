@@ -46,7 +46,8 @@ Initial inspection found only `.git/`, an unborn `main` branch, no tracked files
 | [17 Traceability](17-traceability-matrix.md) | Requirement → behavior → contract → UX → security → test → phase |
 | [18 Inspection report](18-repository-inspection-report.md) | Repository facts and evidence limitations |
 | [19 Implementation status](19-implementation-status.md) | Implemented scope, verification evidence and remaining phase gates |
-| [20 Guide Engine migration plan](20-guide-engine-migration-plan.md) | Proposed v2 migration, invariants and PR-sized phases; **awaiting approval**, authorizes no code |
+| [20 Guide Engine migration plan](20-guide-engine-migration-plan.md) | Approved v2 migration, invariants and PR-sized phases; Phases 0–2 merged |
+| [21 Observation consent notice](21-observation-consent-notice.md) | Normative wording for continuous-observation consent; **draft pending D06** |
 | [ADRs](adr/README.md) | Decision rationale and change controls |
 
 Resolve conflicts by domain authority above. Do not silently choose between conflicting contracts: fix the documents and associated traceability first. `MUST`, `MUST NOT` and `SHOULD` are normative requirements, prohibitions and defaults with documented exceptions. ADRs explain decisions but do not override newer explicit contracts without updating both.

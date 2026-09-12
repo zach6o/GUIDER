@@ -68,6 +68,8 @@ class Session(Schema):
     current_step_id: UUID | None
     confirmed_plan_version: int | None
     observation_mode: Literal["screenshot_only", "window"]
+    observation_active: bool
+    frames_observed: int
     controller_device_id: UUID | None
     outcome: Literal["achieved", "user_reported", "stopped", "failed", "expired"] | None
     checkpoint_state: SessionState | None
@@ -242,6 +244,23 @@ class EventPage(Schema):
     items: list[Event]
     # Pass back as `after` to resume exactly here. Stable across reconnects.
     next_after: int
+
+
+class ObservationConsent(Schema):
+    """Explicit, separate consent for continuous watching. Accepting a screenshot
+    upload does not imply this, and the version pins what was actually agreed to."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    consent_version: Annotated[str, Field(min_length=1, max_length=40)]
+    accepted: Literal[True]
+
+
+class ObservationState(Schema):
+    active: bool
+    frames_observed: int
+    observation_calls_remaining: int
+    consent_version: str
+    session: Session
 
 
 class ObserveRequest(Schema):

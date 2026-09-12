@@ -579,6 +579,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_ObservationState_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ObservationState"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ObservationState]"
+      },
       "Envelope_ObservationTick_": {
         "properties": {
           "data": {
@@ -1062,6 +1081,68 @@
           "confidence"
         ],
         "title": "Observation"
+      },
+      "ObservationConsent": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "consent_version": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Consent Version"
+          },
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "consent_version",
+          "accepted"
+        ],
+        "title": "ObservationConsent",
+        "description": "Explicit, separate consent for continuous watching. Accepting a screenshot\nupload does not imply this, and the version pins what was actually agreed to."
+      },
+      "ObservationState": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "frames_observed": {
+            "type": "integer",
+            "title": "Frames Observed"
+          },
+          "observation_calls_remaining": {
+            "type": "integer",
+            "title": "Observation Calls Remaining"
+          },
+          "consent_version": {
+            "type": "string",
+            "title": "Consent Version"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "active",
+          "frames_observed",
+          "observation_calls_remaining",
+          "consent_version",
+          "session"
+        ],
+        "title": "ObservationState"
       },
       "ObservationTick": {
         "properties": {
@@ -1599,6 +1680,14 @@
             ],
             "title": "Observation Mode"
           },
+          "observation_active": {
+            "type": "boolean",
+            "title": "Observation Active"
+          },
+          "frames_observed": {
+            "type": "integer",
+            "title": "Frames Observed"
+          },
           "controller_device_id": {
             "anyOf": [
               {
@@ -1672,6 +1761,8 @@
           "current_step_id",
           "confirmed_plan_version",
           "observation_mode",
+          "observation_active",
+          "frames_observed",
           "controller_device_id",
           "outcome",
           "checkpoint_state",

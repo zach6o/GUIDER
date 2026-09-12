@@ -1,0 +1,44 @@
+# Architecture decision records
+
+Status: proposed product implementation baseline, 2026-09-07. No ADR implies existing code, provider procurement or deployment approval. Decisions are normative defaults for the requested design; open deployment decisions are D01–D07 in [the documentation README](../README.md).
+
+| ADR | Decision | Requirement trace |
+|---|---|---|
+| [001](001-standalone-user-mode.md) | Standalone User Mode first | R19/R26/R30 |
+| [002](002-screenshot-first.md) | Screenshot-first support | R03/R06/R24 |
+| [003](003-opt-in-observation.md) | Opt-in scoped observation | R06/R11/R17 |
+| [004](004-no-raw-video-storage.md) | No raw screen-video storage | R16/R23 |
+| [005](005-guide-not-control.md) | Guide instead of control | R08/R17/R29 |
+| [006](006-floating-windows-overlay.md) | Floating Windows overlay | R07/R12/R21/R27 |
+| [007](007-multiple-domains-limited-mvp.md) | Broad domains, limited MVP | R24/R25 |
+| [008](008-supabase-auth.md) | Supabase remains identity provider | R15/R19 |
+| [009](009-persist-task-state.md) | Persist task/checkpoint state | R13/R14/R20 |
+| [010](010-one-step-guidance.md) | One verified step at a time | R08/R09/R10 |
+| [011](011-application-allowlisting.md) | Application allowlisting | R17/R24 |
+| [012](012-high-risk-action-gates.md) | Block or specifically confirm high risk | R17/R29 |
+| [013](013-agent-zero-integration.md) | Future Agent Zero authorization boundary | R19/R26 |
+| [014](014-initial-stack-and-contracts.md) | Initial stack and service contracts in empty repository | R15/R19/R20/R30 |
+| [015](015-browser-observation-and-personal-cloud.md) | Local browser observation and personal OpenAI connection; accepted development exception | R06/R08/R11/R16/R18/R22 |
+| [016](016-web-first-tiered-observation.md) | Web-first guidance with tiered observation | R06/R07/R11/R12/R16/R21/R23 |
+| [017](017-provider-role-abstraction.md) | Provider abstraction by bounded role | R18/R19/R22/R23 |
+| [018](018-imported-conversation-context.md) | Imported conversation context | R02/R05/R18 |
+
+## v2 supersessions
+
+ADRs 016–018 are proposed for the Guide Engine architecture in [20](../20-guide-engine-migration-plan.md) and are not adopted until that plan is approved. They change these earlier decisions and no others.
+
+| Earlier ADR | Status under v2 | What changes |
+|---|---|---|
+| [002](002-screenshot-first.md) | Amended | Screenshot-only remains a fully supported path and the degradation target; it is no longer the only path before live observation |
+| [003](003-opt-in-observation.md) | Superseded in part by [016](016-web-first-tiered-observation.md) | User-triggered stills become locally change-gated admission under separate continuous-observation consent. Default-off, single window, no full display, immediate local stop and fresh permission after resume are preserved |
+| [004](004-no-raw-video-storage.md) | Reinforced | Observation frames are never persisted at all, which is stricter than the ≤24 h still retention |
+| [006](006-floating-windows-overlay.md) | Deferred by [016](016-web-first-tiered-observation.md) | The MVP guidance surface is a web island with Document Picture-in-Picture; native floating windows remain the target for a separately authorized native client |
+| [011](011-application-allowlisting.md) | Unchanged and still open | A browser cannot attest executable identity; the native allowlist stays required before any distributed release, and continuous observation stays unavailable in production until it exists |
+| [014](014-initial-stack-and-contracts.md) | Amended by [016](016-web-first-tiered-observation.md)/[017](017-provider-role-abstraction.md) | The WPF client leaves the MVP path and is archived; no Electron or Tauri replaces it. Stack, transport and contract decisions are otherwise unchanged |
+| [015](015-browser-observation-and-personal-cloud.md) | Generalized | The loopback BYOK connector becomes one provider adapter rather than the only cloud path |
+
+[005](005-guide-not-control.md), [008](008-supabase-auth.md), [009](009-persist-task-state.md), [010](010-one-step-guidance.md), [012](012-high-risk-action-gates.md) and [013](013-agent-zero-integration.md) are unchanged by v2. Automatic step advancement under [016](016-web-first-tiered-observation.md) is evidence-driven and therefore consistent with [010](010-one-step-guidance.md), which prohibits advancing on a timer, a click or a user's word alone.
+
+Change process: add a superseding ADR for identity, safety, data ownership/retention, session semantics, incompatible API, execution rights, platform integration or service-boundary changes. Update affected specs and [traceability](../17-traceability-matrix.md) in the same change. Minor implementation fixes within these contracts need no new ADR. No blanket permission gate is introduced for routine work.
+
+Each ADR includes context, decision, alternatives, consequences, revisit conditions, assumptions/dependencies/open decisions, security and a local traceability table. Example: adding an automatic terminal executor would supersede 005 and 012, require new explicit product authorization and tests; a checkbox labeled Confirm alone cannot authorize this scope change.

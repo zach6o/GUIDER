@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+.env
+.env.*
+!.env.example
+.local/
+bin/
+obj/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.pnpm-store/
+
+# Local agent tooling, not part of the product. Project-level .claude/settings.json
+# stays tracked so shared hooks and permissions can be reviewed.
+.claude/skills/
+.claude/settings.local.json

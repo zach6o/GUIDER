@@ -1,0 +1,226 @@
+from datetime import datetime
+from enum import StrEnum
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+
+class Schema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, from_attributes=True)
+
+
+class Category(StrEnum):
+    setup = "setup"
+    run = "run"
+    debug = "debug"
+    understand = "understand"
+    test = "test"
+    git_github = "git_github"
+
+
+class SessionState(StrEnum):
+    task_created = "task_created"
+    analyzing = "analyzing"
+    plan_ready = "plan_ready"
+    awaiting_user_confirmation = "awaiting_user_confirmation"
+    awaiting_screen_permission = "awaiting_screen_permission"
+    active = "active"
+    capturing = "capturing"
+    processing = "processing"
+    instruction_ready = "instruction_ready"
+    awaiting_user_action = "awaiting_user_action"
+    verifying = "verifying"
+    blocked = "blocked"
+    paused = "paused"
+    stopping = "stopping"
+    completed = "completed"
+    failed = "failed"
+    expired = "expired"
+
+
+class TaskCreate(Schema):
+    goal: Annotated[str, Field(min_length=1, max_length=4000)]
+    title: Annotated[str, Field(min_length=1, max_length=120)] = ""
+    category: Category
+    application_key: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class Task(Schema):
+    id: UUID
+    title: str
+    goal: str
+    category: Category
+    application_key: str
+    status: Literal["open", "completed", "archived", "deleting"]
+    current_session_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class Session(Schema):
+    id: UUID
+    task_id: UUID
+    previous_session_id: UUID | None
+    state: SessionState
+    state_version: int
+    control_epoch: int
+    current_step_id: UUID | None
+    confirmed_plan_version: int | None
+    observation_mode: Literal["screenshot_only", "window"]
+    controller_device_id: UUID | None
+    outcome: Literal["achieved", "user_reported", "stopped", "failed", "expired"] | None
+    checkpoint_state: SessionState | None
+    expires_at: datetime
+    last_user_activity_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreatedTask(Schema):
+    task: Task
+    session: Session
+
+
+class UploadMetadata(Schema):
+    session_id: UUID | None = None
+    source: Literal["manual", "observation"]
+    purpose: Literal["context", "verification", "error", "disagreement"]
+    captured_at: AwareDatetime
+    replaces_screenshot_id: UUID | None = None
+    expected_version: Annotated[int, Field(ge=1)] | None = None
+
+    @model_validator(mode="after")
+    def check_version(self) -> "UploadMetadata":
+        if self.session_id is not None and self.expected_version is None:
+            raise ValueError("Session uploads require expected_version")
+        return self
+
+
+class Screenshot(Schema):
+    id: UUID
+    task_id: UUID
+    session_id: UUID | None
+    source: Literal["manual", "observation"]
+    version: int
+    status: Literal["accepted", "processing", "ready", "rejected", "deleting", "deleted", "expired"]
+    width: int
+    height: int
+    content_type: str
+    byte_size: int
+    captured_at: datetime
+    expires_at: datetime
+    replaces_screenshot_id: UUID | None
+
+
+class Uploaded(Schema):
+    screenshot: Screenshot
+    session: Session | None
+    operation_id: UUID | None = None
+
+
+class AnalyzeRequest(Schema):
+    session_id: UUID
+    expected_version: Annotated[int, Field(ge=1)]
+    screenshot_ids: Annotated[list[UUID], Field(min_length=1, max_length=3)]
+    question: Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+class BBox(Schema):
+    x: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+    y: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+    width: Annotated[float, Field(gt=0, le=1, allow_inf_nan=False)]
+    height: Annotated[float, Field(gt=0, le=1, allow_inf_nan=False)]
+
+    @model_validator(mode="after")
+    def inside(self) -> "BBox":
+        if self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("Box must stay inside the image")
+        return self
+
+
+class Observation(Schema):
+    label: Annotated[str, Field(min_length=1, max_length=120)]
+    bbox: BBox | None
+    confidence: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
+class Analysis(Schema):
+    id: UUID
+    screenshot_ids: list[UUID]
+    observations: list[Observation]
+    explanation: Annotated[str, Field(max_length=4000)]
+    needs_context: bool
+    context_request: Annotated[str, Field(max_length=500)] | None
+
+
+class ErrorBody(Schema):
+    code: str
+    message: str
+    retryable: bool
+
+
+class ErrorDetails(Schema):
+    current_version: int | None = None
+    retry_after_seconds: int | None = None
+
+
+class TransportError(ErrorBody):
+    details: ErrorDetails | None = None
+
+
+class ErrorEnvelope(Schema):
+    error: TransportError
+    request_id: UUID
+
+
+class Operation(Schema):
+    id: UUID
+    kind: Literal["analyze"]
+    status: Literal["queued", "running", "succeeded", "failed", "canceled"]
+    session_id: UUID | None
+    result: Analysis | None
+    error: ErrorBody | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class Pending(Schema):
+    operation_id: UUID
+    session: Session | None
+    poll_after_ms: int = 2000
+
+
+class DeletionReceipt(Schema):
+    id: UUID
+    scope: Literal["screenshot"]
+    status: Literal["queued", "purging", "purged", "failed"]
+    requested_at: datetime
+    online_purge_due_at: datetime
+    backup_expiry_due_at: datetime | None
+    completed_at: datetime | None
+
+
+class PauseRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)] | None = None
+    reason: Literal["user", "network", "auth", "lock", "suspend", "controller_lost"]
+
+
+class StopRequest(Schema):
+    expected_version: Annotated[int, Field(ge=1)] | None = None
+    reason: Literal["user", "close", "sign_out", "emergency"]
+
+
+class SessionItem(Schema):
+    session: Session
+    task_title: str
+
+
+class SessionList(Schema):
+    items: list[SessionItem]
+    next_cursor: str | None
+
+
+class Envelope[T](Schema):
+    data: T
+    request_id: UUID

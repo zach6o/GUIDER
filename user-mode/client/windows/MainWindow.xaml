@@ -1,0 +1,14 @@
+<Window x:Class="Guider.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Guider — desktop preview" Width="560" Height="340"
+        MinWidth="400" MinHeight="300" Background="#F6F7F2"
+        WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="36" VerticalAlignment="Center">
+    <TextBlock Text="guider." FontSize="36" FontWeight="SemiBold" Foreground="#355A44" />
+    <TextBlock Text="A little direction, one step at a time." FontSize="17" Margin="0,18,0,12" TextWrapping="Wrap" />
+    <TextBlock Text="Desktop features are not enabled yet. Use the web workspace for screenshot help."
+               FontSize="14" Foreground="#52634B" TextWrapping="Wrap" />
+    <TextBlock Text="Screen observation off · Microphone off" FontSize="12" Margin="0,28,0,0" Foreground="#52634B" />
+  </StackPanel>
+</Window>

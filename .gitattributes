@@ -1,0 +1,14 @@
+# Normalize to LF in the repository so Windows checkouts and Linux CI agree.
+* text=auto eol=lf
+
+*.png binary
+*.ttf binary
+*.ico binary
+*.jpg binary
+*.webp binary
+
+# Generated; keep diffs reviewable but do not treat as authored source.
+user-mode/contracts/*.json linguist-generated=true
+*.lock linguist-generated=true
+package-lock.json linguist-generated=true
+pnpm-lock.yaml linguist-generated=true

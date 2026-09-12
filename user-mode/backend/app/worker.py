@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app import models as m
 from app.errors import GuideError
+from app.guide.guard import vet_analysis
 from app.schemas import Analysis
 from app.service import change, event, purge_image, usable
 
@@ -63,10 +64,13 @@ async def tick(app) -> None:
             for image in images:
                 usable(image)
                 pixels.append((image.id, await app.state.storage.read(image.object_key)))
-            result = Analysis.model_validate(
-                await asyncio.wait_for(
-                    app.state.provider.analyze(pixels),
-                    timeout=10,
+            # The adapter cannot approve its own output; the guard decides.
+            result = vet_analysis(
+                Analysis.model_validate(
+                    await asyncio.wait_for(
+                        app.state.provider.analyze(pixels),
+                        timeout=10,
+                    )
                 )
             )
             if {str(value) for value in result.screenshot_ids} != {im.id for im in images}:

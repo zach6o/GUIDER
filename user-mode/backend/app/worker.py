@@ -2,13 +2,53 @@ import asyncio
 from datetime import timedelta
 from uuid import uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app import models as m
 from app.errors import GuideError
 from app.guide.guard import vet_analysis
+from app.guide.planner import context_for, persist
 from app.schemas import Analysis
 from app.service import change, event, purge_image, usable
+
+
+async def run_plan(app, db, pending, session, request_id: str) -> None:
+    """Role `plan`: propose, vet, persist, then hand the plan to the user for review.
+    The worker never confirms a plan (ADR-010)."""
+    try:
+        if pending.deadline_at <= m.now():
+            raise GuideError(503, "operation_timeout", "Planning timed out.")
+        task = await db.get(m.GuideTask, pending.task_id)
+        provider = app.state.providers.select("plan")
+        proposal = await asyncio.wait_for(provider.plan(context_for(task)), timeout=30)
+        plan = await persist(db, session, task, proposal)
+        pending.result_ref = plan.id
+        pending.status = "succeeded"
+        await change(db, session, "plan_ready", "plan_ready", request_id)
+        await event(db, session, "plan.ready", request_id, {"plan_id": plan.id})
+        await change(
+            db, session, "awaiting_user_confirmation", "plan_published", request_id
+        )
+        await event(
+            db,
+            session,
+            "plan.confirmation_required",
+            request_id,
+            {"plan_id": plan.id, "version": plan.version},
+        )
+        await event(db, session, "operation.completed", request_id, {"operation_id": pending.id})
+    except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
+        pending.status = "failed"
+        pending.error_code = "dependency_unavailable"
+        await change(
+            db,
+            session,
+            session.checkpoint_state or "task_created",
+            "plan_failed",
+            request_id,
+        )
+        await event(db, session, "operation.failed", request_id, {"operation_id": pending.id})
 
 
 async def tick(app) -> None:
@@ -47,6 +87,10 @@ async def tick(app) -> None:
             return
         pending.status = "running"
         pending.attempt_count += 1
+        if pending.kind == "plan":
+            await run_plan(app, db, pending, session, request_id)
+            pending.completed_at = m.now()
+            return
         try:
             if pending.deadline_at <= m.now():
                 raise GuideError(503, "operation_timeout", "Analysis timed out.")

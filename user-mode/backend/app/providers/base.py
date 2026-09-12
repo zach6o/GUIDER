@@ -5,14 +5,14 @@ Adapters implement bounded roles and return validated structures, never free tex
 Selection is by role and capability; a provider name must not be compared outside
 this package.
 
-The `analyze` and `guide` roles below are the two that exist today. The remaining
-roles in `Role` are declared so the registry and descriptors are ready for them;
-their Protocols land with the phase that implements them, because a Protocol no
-adapter satisfies is fiction.
+The `analyze`, `guide` and `plan` roles below are the ones that exist today. The
+remaining roles in `Role` are declared so the registry and descriptors are ready
+for them; their Protocols land with the phase that implements them, because a
+Protocol no adapter satisfies is fiction.
 """
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
 from pydantic import Field, SecretStr
 
@@ -44,6 +44,34 @@ class Guidance(Schema):
     disposition: Literal["guide", "needs_context", "blocked"]
 
 
+class PlanContext(Schema):
+    """Everything a planner may see. No screen content and no account data."""
+
+    goal: str = Field(min_length=1, max_length=4000)
+    category: str = Field(max_length=30)
+    application_key: str = Field(max_length=80)
+
+
+class ProposedStep(Schema):
+    title: str = Field(min_length=1, max_length=120)
+    action: str = Field(min_length=1, max_length=1000)
+    expected_result: str = Field(max_length=500)
+    success_criterion: str = Field(min_length=1, max_length=500)
+    fallback: str = Field(max_length=500)
+    explanation: str = Field(max_length=1000)
+    application_key: str = Field(min_length=1, max_length=80)
+    risk: Literal["low", "medium", "high"] = "low"
+    evidence_kind: Literal["visual", "text", "self_report"] = "visual"
+    required: bool = True
+
+
+class ProposedPlan(Schema):
+    """A proposal, never a confirmed plan: 1-12 steps, per ADR-010."""
+
+    assumptions: list[Annotated[str, Field(max_length=300)]] = Field(max_length=8, default=[])
+    steps: list[ProposedStep] = Field(min_length=1, max_length=12)
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """What an adapter can do. The registry selects on this, never on `id`."""
@@ -66,6 +94,13 @@ class AnalysisProvider(Protocol):
     """Role `analyze`: owned account evidence to a validated explanation."""
 
     async def analyze(self, images: list[tuple[str, bytes]]) -> Analysis: ...
+
+
+class Planner(Protocol):
+    """Role `plan`: a goal to a bounded roadmap. Cannot confirm its own plan or
+    widen the task or application scope (see doc 12, agent responsibilities)."""
+
+    async def plan(self, ctx: PlanContext) -> ProposedPlan: ...
 
 
 class LiveGuidanceProvider(Protocol):

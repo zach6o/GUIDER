@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from PIL import Image, ImageDraw
 
 from app.media import normalize
+from app.providers.base import PlanContext, ProposedPlan, ProposedStep
 from app.schemas import Analysis, BBox, Observation
 
 
@@ -29,11 +30,62 @@ def python_fixture() -> bytes:
     return out.getvalue()
 
 
+# A fixed roadmap for the synthetic Python example. Deterministic on purpose: it
+# lets the whole plan/confirm/step loop be exercised with no provider spend and no
+# network, which is what 12-agent-responsibilities.md asks for before integration.
+FIXTURE_PLAN = [
+    {
+        "title": "Open the terminal",
+        "action": "Open the integrated terminal in your editor.",
+        "expected_result": "A shell prompt appears in a panel.",
+        "success_criterion": "A command prompt is visible and accepts typing.",
+        "fallback": "Use the View menu, then Terminal.",
+        "explanation": "The interpreter reports what went wrong in the terminal, not the editor.",
+    },
+    {
+        "title": "Show which interpreter is running",
+        "action": "Type `python -c \"import sys; print(sys.executable)\"` and press Enter.",
+        "expected_result": "A file path to a python executable is printed.",
+        "success_criterion": "A path ending in python or python.exe is visible in the output.",
+        "fallback": "If `python` is not found, try `py -c` on Windows or `python3 -c` elsewhere.",
+        "explanation": (
+            "A package installed for one interpreter is invisible to another. "
+            "Knowing which one runs your code is what makes the next step meaningful."
+        ),
+    },
+    {
+        "title": "List what that interpreter can see",
+        "action": 'Type `python -c "import requests"` and press Enter.',
+        "expected_result": "Either nothing is printed, or the same ModuleNotFoundError appears.",
+        "success_criterion": "The command finishes and its output is visible.",
+        "fallback": "If the prompt does not return, press Ctrl+C and try again.",
+        "explanation": (
+            "Silence means the package is available to this interpreter. "
+            "Repeating the error confirms the package is genuinely missing here."
+        ),
+    },
+]
+
+
 class FixtureProvider:
-    """A test double, not vision: exact fixture recognition, no external transmission."""
+    """A test double, not vision: exact fixture recognition, no external transmission.
+
+    Serves the `analyze` and `plan` roles. Neither reaches a network.
+    """
 
     def __init__(self):
         self.fixture_hash = normalize(python_fixture()).digest
+
+    async def plan(self, ctx: PlanContext) -> ProposedPlan:
+        return ProposedPlan(
+            assumptions=[
+                "This fixed roadmap comes from a development fixture, not from a planner model.",
+                f"Written for the {ctx.application_key} workflow on this machine.",
+            ],
+            steps=[
+                ProposedStep(application_key=ctx.application_key, **step) for step in FIXTURE_PLAN
+            ],
+        )
 
     async def analyze(self, images: list[tuple[str, bytes]]) -> Analysis:
         recognized = len(images) == 1 and (

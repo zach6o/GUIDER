@@ -13,6 +13,17 @@ from app.errors import GuideError, not_found
 
 TERMINAL = {"completed", "failed", "expired"}
 ANALYSIS_STATES = {"task_created", "awaiting_user_confirmation", "paused", "blocked"}
+# A plan may be requested or regenerated from these, per the 05 transition table.
+PLAN_STATES = {"task_created", "plan_ready", "awaiting_user_confirmation", "paused", "blocked"}
+
+
+async def current_plan_version(db: AsyncSession, session: m.GuideSession) -> int | None:
+    return await db.scalar(
+        select(func.max(m.TaskPlan.version)).where(
+            m.TaskPlan.owner_id == session.owner_id,
+            m.TaskPlan.session_id == session.id,
+        )
+    )
 
 
 async def owned(db: AsyncSession, model, resource_id: str, owner: str):

@@ -15,9 +15,10 @@ from fastapi import APIRouter, Header, Request
 from pydantic import Field, SecretStr
 
 from app.errors import GuideError
+from app.guide.guard import POLICY, vet_guidance
 from app.media import normalize
 from app.providers.base import MAX_IMAGE, MODEL, CheckInput, Guidance
-from app.providers.openai import POLICY, OpenAIVision
+from app.providers.openai import OpenAIVision
 from app.schemas import Schema
 
 # Moved to app.providers in PR-1; re-exported so existing importers resolve unchanged.
@@ -183,9 +184,11 @@ async def check(body: CheckInput, request: Request, authorization: Annotated[str
         image = await asyncio.to_thread(prepare_cloud_image, body.image_base64)
         if connection.epoch != epoch:
             raise asyncio.CancelledError()
-        return await request.app.state.cloud_provider.analyze(
+        proposal = await request.app.state.cloud_provider.analyze(
             connection.key, connection.model, body, image
         )
+        # The adapter cannot approve its own output; the guard decides.
+        return vet_guidance(proposal)
 
     connection.calls += 1
     connection.last_call = time.monotonic()

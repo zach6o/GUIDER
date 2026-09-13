@@ -1,5 +1,36 @@
 # 19 · Implementation status and session handoff
 
+## The island on a server session: 2026-09-13
+
+The Guide Island now runs a real session. Starting it calls `POST /sessions/{id}/start`, the step
+it shows is whichever step the engine published an `Instruction` for, and it follows that session's
+`GuidanceEvent` stream to learn when the next one is ready. `web/src/guide/engine.ts` stays where
+it was, as the offline practice demo's reducer; `web/src/guide/live.ts` is its server-driven
+counterpart.
+
+Making that work needed the missing half of manual progression. A claim was already recorded
+without verifying anything, and nothing else could move a step, so a guide with watching off could
+only ever reach step one. `POST /sessions/{session_id}/steps/{step_id}/verifications` implements
+doc 07's verification route, self-report arm only: it records a `user_reported` VerificationResult
+with `evidence_available=false`, leaves the step `user_claimed` with no `verified_at`, and prepares
+the next instruction. `next_open_step` skips steps that carry such a result, which is how the guide
+advances without anything being marked verified. Evidence sent to that route is refused with
+`evidence_required` rather than quietly downgraded to a self-report; objective checking arrives
+with the evidence path. Doc 05 gained a paragraph recording the rule.
+
+One bug fell out of testing: when a plan ran out of steps the last instruction stayed `ready`, so
+the instruction route kept handing back a step the guide was already past. Exhausting a plan now
+retires the current instruction.
+
+The browser demo mirrors all of it — start, instruction, claim, self-report, skip and a sequenced
+event log — so the Playwright suite still runs with no backend and the offline demo makes the same
+promises the server does.
+
+Current verification: 232 backend tests pass and 2 skip on SQLite, 72 web unit tests pass, and 23
+browser scenarios pass in installed Chrome. Still no provider request: every role runs on the
+deterministic fixture. Observation remains off in this path; the consent, counter and stop routes
+from PR-14 have no surface yet, and wiring the observer loop to them is the next piece.
+
 ## Guide Engine migration: 2026-09-12
 
 The Guide Engine migration in [20](20-guide-engine-migration-plan.md) is approved and under way. Phases 0 to 2 are merged; Phase 3 has begun.

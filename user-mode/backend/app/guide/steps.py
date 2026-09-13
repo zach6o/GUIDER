@@ -16,6 +16,7 @@ from app.errors import GuideError, not_found
 from app.guide.engine import record_event
 
 INSTRUCTION_RETENTION = timedelta(days=30)
+VERIFICATION_RETENTION = timedelta(days=30)
 # A step that still needs the user to do something.
 OPEN_STATUSES = frozenset({"pending", "instruction_ready", "awaiting_user_action", "user_claimed"})
 
@@ -35,7 +36,22 @@ async def confirmed_plan(db: AsyncSession, session: m.GuideSession) -> m.TaskPla
 
 async def next_open_step(db: AsyncSession, plan: m.TaskPlan) -> m.TaskStep | None:
     """The lowest-ordinal step still waiting on the user. Blocked steps are not
-    handed out: a blocked step cannot produce an instruction (ADR-012)."""
+    handed out: a blocked step cannot produce an instruction (ADR-012).
+
+    A self-reported step is no longer waiting on the user, but it is not
+    verified either. Its status stays `user_claimed` — the user's word, exactly
+    as ADR-010 requires — and it is excluded here by its `user_reported`
+    verification instead. That is what lets a screenshot-only guide reach its
+    last step without any of them ever being marked verified.
+    """
+    self_reported = (
+        select(m.VerificationResult.step_id)
+        .where(
+            m.VerificationResult.owner_id == plan.owner_id,
+            m.VerificationResult.status == "user_reported",
+        )
+        .scalar_subquery()
+    )
     return await db.scalar(
         select(m.TaskStep)
         .where(
@@ -43,6 +59,7 @@ async def next_open_step(db: AsyncSession, plan: m.TaskPlan) -> m.TaskStep | Non
             m.TaskStep.plan_id == plan.id,
             m.TaskStep.status.in_(OPEN_STATUSES),
             m.TaskStep.policy_disposition != "block",
+            m.TaskStep.id.not_in(self_reported),
         )
         .order_by(m.TaskStep.ordinal)
         .limit(1)
@@ -134,6 +151,21 @@ async def publish_instruction(
     return instruction
 
 
+async def retire_instructions(db: AsyncSession, session: m.GuideSession) -> None:
+    """Leave no current instruction behind. Used when the plan runs out: an
+    instruction that is still `ready` is a step the user is being asked to do."""
+    for old in await db.scalars(
+        select(m.Instruction).where(
+            m.Instruction.owner_id == session.owner_id,
+            m.Instruction.session_id == session.id,
+            m.Instruction.status == "ready",
+        )
+    ):
+        old.status = "superseded"
+        old.updated_at = m.now()
+    await db.flush()
+
+
 async def record_claim(
     db: AsyncSession,
     session: m.GuideSession,
@@ -181,6 +213,53 @@ async def record_claim(
         {"step_id": step.id, "claim_id": claim.id, "verified": False},
     )
     return claim
+
+
+async def record_self_report(
+    db: AsyncSession,
+    session: m.GuideSession,
+    step: m.TaskStep,
+    claim: m.CompletionClaim,
+    statement: str,
+    request_id: str,
+) -> m.VerificationResult:
+    """Save what the user says happened, as a result that never passes.
+
+    `user_reported` is its own verification status precisely so this can be
+    recorded without pretending it is evidence: `evidence_available` is false,
+    the step keeps its `user_claimed` status and gains no `verified_at`, and a
+    session resting on these can only end `user_reported` (docs 02 F09, 05).
+    """
+    verification = m.VerificationResult(
+        id=m.new_id(),
+        owner_id=session.owner_id,
+        session_id=session.id,
+        step_id=step.id,
+        claim_id=claim.id,
+        status="user_reported",
+        verifier_kind="self_report",
+        reason=statement,
+        evidence_available=False,
+        instruction_version=claim.instruction_version,
+        control_epoch=session.control_epoch,
+        completed_at=m.now(),
+        expires_at=m.now() + VERIFICATION_RETENTION,
+    )
+    db.add(verification)
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "verification.completed",
+        request_id,
+        {
+            "step_id": step.id,
+            "verification_id": verification.id,
+            "passed": False,
+            "status": "user_reported",
+        },
+    )
+    return verification
 
 
 async def skip_step(

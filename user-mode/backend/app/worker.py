@@ -10,7 +10,12 @@ from app.errors import GuideError
 from app.guide.engine import record_event, transition
 from app.guide.guard import vet_analysis, vet_instruction
 from app.guide.planner import context_for, persist, steps_for
-from app.guide.steps import confirmed_plan, next_open_step, publish_instruction
+from app.guide.steps import (
+    confirmed_plan,
+    next_open_step,
+    publish_instruction,
+    retire_instructions,
+)
 from app.providers.base import InstructionContext
 from app.schemas import Analysis
 from app.service import purge_image, usable
@@ -73,6 +78,10 @@ async def run_instruction(app, db, pending, session, request_id: str) -> None:
         if step is None:
             pending.status = "succeeded"
             session.current_step_id = None
+            # Nothing is waiting on the user, so nothing may still read as the
+            # current instruction: a stale one would invite a claim on a step
+            # that is already behind the guide.
+            await retire_instructions(db, session)
             await transition(db, session, "awaiting_user_action", "steps_exhausted", request_id)
             await record_event(
                 db, session, "plan.steps_exhausted", request_id, {"plan_id": plan.id}

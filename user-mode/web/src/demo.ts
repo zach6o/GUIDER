@@ -1,10 +1,19 @@
-import type { Analysis, GuideApi, Operation, Plan, Screenshot, Session, Task } from './types';
+import type {
+  Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, Instruction, Operation, Plan,
+  Screenshot, SelfReported, Session, Step, Task,
+} from './types';
 
 const tasks = new Map<string, Task>();
 const sessions = new Map<string, Session>();
 const images = new Map<string, { blob: Blob; screenshot: Screenshot }>();
 const operations = new Map<string, Operation>();
 const plans = new Map<string, Plan>();
+const instructions = new Map<string, Instruction>();
+const claims = new Map<string, { id: string; step_id: string; status: string; version: number }>();
+// Steps the user has said they did. Mirrors a `user_reported` VerificationResult
+// on the server: enough to stop handing the step out, never enough to verify it.
+const selfReported = new Map<string, Set<string>>();
+const events = new Map<string, GuideEventPage['items']>();
 
 // Mirrors FIXTURE_PLAN in the backend fixture provider, so the offline demo shows
 // the same roadmap the development adapter produces.
@@ -36,6 +45,99 @@ const requireItem = <T,>(map: Map<string, T>, id: string): T => {
   if (!value) throw new Error('This item is no longer available in the demo.');
   return value;
 };
+
+function emit(session: Session, type: string, payload: Record<string, unknown> = {}) {
+  const log = events.get(session.id) ?? [];
+  log.push({
+    sequence: log.length + 1, state_version: session.state_version,
+    control_epoch: session.control_epoch, type, payload, created_at: timestamp(),
+  });
+  events.set(session.id, log);
+}
+
+function move(session: Session, state: string, reason: string) {
+  const from = session.state;
+  session.state = state; session.state_version++;
+  if (from !== state) emit(session, 'session.state_changed', { from, to: state, reason });
+}
+
+function confirmedPlanFor(session: Session): Plan {
+  for (const plan of plans.values()) {
+    if (plan.session_id === session.id && plan.status === 'confirmed') return plan;
+  }
+  throw new Error('Confirm a plan before starting.');
+}
+
+const OPEN = ['pending', 'instruction_ready', 'awaiting_user_action', 'user_claimed'];
+
+function nextOpenStep(session: Session): Step | null {
+  const reported = selfReported.get(session.id) ?? new Set<string>();
+  return confirmedPlanFor(session).steps.find(step => OPEN.includes(step.status)
+    && step.policy_disposition !== 'block' && !reported.has(step.id)) ?? null;
+}
+
+function retireInstructions(session: Session) {
+  for (const existing of instructions.values()) {
+    if (existing.session_id === session.id && existing.status === 'ready') {
+      existing.status = 'superseded';
+    }
+  }
+}
+
+/** The demo's stand-in for the `instruct` role. Fixed text, like the backend
+ *  fixture provider: no model runs in this browser. */
+function publishInstruction(session: Session, step: Step): Instruction {
+  retireInstructions(session);
+  const version = [...instructions.values()].filter(item => item.step_id === step.id).length + 1;
+  const instruction: Instruction = {
+    id: uid(), session_id: session.id, step_id: step.id, version, status: 'ready',
+    what: step.action, where: `In ${step.application_key.replace('_', ' ')}.`,
+    why: step.explanation || null,
+    confirmation_hint: step.expected_result,
+    cannot_find_hint: step.fallback || 'Tell Guider what you can see instead.',
+    created_at: timestamp(),
+  };
+  instructions.set(instruction.id, instruction);
+  step.status = 'instruction_ready';
+  session.current_step_id = step.id;
+  emit(session, 'instruction.ready', { instruction_id: instruction.id, step_id: step.id, version });
+  move(session, 'instruction_ready', 'instruction_ready');
+  move(session, 'awaiting_user_action', 'instruction_published');
+  step.status = 'awaiting_user_action';
+  emit(session, 'step.awaiting_action', { step_id: step.id });
+  return instruction;
+}
+
+/** Prepare whatever comes next, or report that the plan is finished. Nothing
+ *  here marks a step verified; this demo cannot check a screen either. */
+function prepareNextStep(session: Session) {
+  move(session, 'processing', 'next_step_requested');
+  const step = nextOpenStep(session);
+  if (!step) {
+    retireInstructions(session);
+    session.current_step_id = null;
+    move(session, 'awaiting_user_action', 'steps_exhausted');
+    emit(session, 'plan.steps_exhausted', {});
+    return null;
+  }
+  return publishInstruction(session, step);
+}
+
+function currentStep(session: Session): { instruction: Instruction; step: Step } | null {
+  const instruction = [...instructions.values()]
+    .find(item => item.session_id === session.id && item.status === 'ready');
+  if (!instruction) return null;
+  const step = confirmedPlanFor(session).steps.find(item => item.id === instruction.step_id);
+  return step ? { instruction, step } : null;
+}
+
+function instructOperation(): Operation {
+  const operation: Operation = {
+    id: uid(), kind: 'instruct', status: 'succeeded', result: null, error: null,
+  };
+  operations.set(operation.id, operation);
+  return operation;
+}
 
 export const demoApi: GuideApi = {
   async create(input) {
@@ -154,5 +256,106 @@ export const demoApi: GuideApi = {
     const session = requireItem(sessions, id);
     session.state = 'completed'; session.outcome = 'stopped'; session.state_version++;
     return clone(session);
+  },
+  async start(session) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    confirmedPlanFor(current);
+    move(current, 'active', 'session_started');
+    emit(current, 'session.started', {});
+    prepareNextStep(current);
+    return clone({ operation_id: instructOperation().id, session: current });
+  },
+  async instruction(id) {
+    const session = requireItem(sessions, id);
+    const current = currentStep(session);
+    if (!current) return null;
+    return clone<CurrentInstruction>({ ...current, session });
+  },
+  async claim(session, stepId, statement) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    if (current.state !== 'awaiting_user_action') throw new Error('There is no step waiting on you.');
+    const found = currentStep(current);
+    if (!found || found.step.id !== stepId) {
+      throw new Error('There is no current instruction to confirm.');
+    }
+    for (const existing of claims.values()) {
+      if (existing.step_id === stepId && existing.status === 'user_claimed') {
+        existing.status = 'superseded';
+      }
+    }
+    const claim = {
+      id: uid(), step_id: stepId, status: 'user_claimed', version: found.instruction.version,
+      statement,
+    };
+    claims.set(claim.id, claim);
+    // A claim is the user's word: the step records it and nothing advances.
+    found.step.status = 'user_claimed'; found.step.attempt_count++;
+    emit(current, 'step.user_claimed', { step_id: stepId, claim_id: claim.id, verified: false });
+    move(current, current.state, 'user_claimed');
+    return clone<Claimed>({
+      claim_id: claim.id, step: found.step, session: current, verified: false,
+    });
+  },
+  async selfReport(session, stepId, claimId, said) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    const claim = claims.get(claimId);
+    if (!claim || claim.step_id !== stepId) throw new Error('That step was not confirmed yet.');
+    if (claim.status !== 'user_claimed') {
+      throw new Error('That confirmation was replaced by a newer one.');
+    }
+    if (!said.trim()) throw new Error('Say what happened, or share a screenshot to check.');
+    const found = currentStep(current);
+    if (!found || found.step.id !== stepId) throw new Error('There is no step waiting on you.');
+
+    move(current, 'verifying', 'self_report_requested');
+    const verification = {
+      id: uid(), session_id: current.id, step_id: stepId, claim_id: claimId,
+      status: 'user_reported' as const, verifier_kind: 'self_report' as const,
+      reason: said.trim(), observed_confidence: null, evidence_available: false,
+      instruction_version: claim.version, created_at: timestamp(),
+    };
+    // The step keeps `user_claimed`. Only evidence could make it verified.
+    const reported = selfReported.get(current.id) ?? new Set<string>();
+    reported.add(stepId); selfReported.set(current.id, reported);
+    emit(current, 'verification.completed', {
+      step_id: stepId, verification_id: verification.id, passed: false, status: 'user_reported',
+    });
+    move(current, 'awaiting_user_action', 'self_report_recorded');
+    prepareNextStep(current);
+    return clone<SelfReported>({
+      verification, step: found.step, session: current, verified: false,
+      next_operation_id: instructOperation().id,
+    });
+  },
+  async skipStep(session, stepId, reason) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    const found = currentStep(current);
+    if (!found || found.step.id !== stepId) throw new Error('There is no step waiting on you.');
+    found.step.status = 'skipped';
+    emit(current, 'step.skipped', { step_id: stepId, reason });
+    prepareNextStep(current);
+    return clone({
+      step: found.step, session: current, next_operation_id: instructOperation().id,
+    });
+  },
+  async events(id, after, waitMs) {
+    const log = events.get(id) ?? [];
+    const items = log.filter(event => event.sequence > after);
+    // The real route long-polls. Here everything already happened, so an empty
+    // answer waits a moment rather than spinning the caller's follow loop.
+    if (!items.length && waitMs) await new Promise(resolve => setTimeout(resolve, 100));
+    return clone({ items, next_after: items.length ? items[items.length - 1].sequence : after });
   },
 };

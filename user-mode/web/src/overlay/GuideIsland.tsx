@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, CircleHelp, Compass, Pause, Play, SkipForward, X } from 'lucide-react';
-import type { Step } from '../types';
+import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
 export interface GuideIslandProps {
   state: IslandState;
   step: Step | null;
+  /** The engine's own wording for this step, when a server session published
+   *  one. The plan's text is the fallback, and the offline practice demo's only
+   *  source. */
+  instruction?: Instruction | null;
   ordinal: number;
   total: number;
   /** Set while the guide is asking the user to confirm the expected result. */
@@ -23,6 +27,12 @@ export interface GuideIslandProps {
 
 export function GuideIsland(props: GuideIslandProps) {
   const { state, step, ordinal, total, asking, correction, paused, mount } = props;
+  const instruction = props.instruction ?? null;
+  const action = instruction?.what ?? step?.action ?? '';
+  const where = instruction?.where ?? '';
+  const check = instruction?.confirmation_hint || step?.expected_result || '';
+  const why = instruction?.why ?? step?.explanation ?? '';
+  const stuck = instruction?.cannot_find_hint ?? step?.fallback ?? '';
   const presentation = PRESENTATION[state];
   const [expanded, setExpanded] = useState(true);
   const [held, setHeld] = useState(false);
@@ -40,7 +50,7 @@ export function GuideIsland(props: GuideIslandProps) {
   }, [expanded, presentation.sticky, held, step?.id, state]);
 
   const Glyph = presentation.glyph;
-  const announcement = step
+  const announcement = step && ordinal >= 1
     ? `${presentation.label}. Step ${ordinal} of ${total}. ${step.title}`
     : presentation.label;
 
@@ -67,7 +77,7 @@ export function GuideIsland(props: GuideIslandProps) {
     {expanded && <div className="island-panel" ref={panel}>
       <div className="island-head">
         <span className="island-status"><Glyph size={14} aria-hidden="true" />{presentation.label}</span>
-        <span className="island-count">Step {ordinal} of {total}</span>
+        {ordinal >= 1 && <span className="island-count">Step {ordinal} of {total}</span>}
         <button className="icon-button island-close" aria-label="Close the guide" onClick={props.onClose}>
           <X size={15} />
         </button>
@@ -75,28 +85,31 @@ export function GuideIsland(props: GuideIslandProps) {
 
       {step ? <>
         <h3>{step.title}</h3>
-        <p className="island-action">{step.action}</p>
+        <p className="island-action">{action}</p>
+        {where && <p className="island-where">{where}</p>}
         {asking
           ? <div className="island-ask">
-              <p><Check size={14} aria-hidden="true" /> Did this happen: {step.expected_result}</p>
+              <p><Check size={14} aria-hidden="true" /> Did this happen: {check}</p>
               <div className="island-answers">
                 <button className="primary" onClick={() => props.onAnswer(true)}>Yes, that happened</button>
                 <button className="text-button" onClick={() => props.onAnswer(false)}>Not yet</button>
               </div>
               <small>You are telling Guider this yourself. Nothing has been checked on screen.</small>
             </div>
-          : <p className="island-expected"><Check size={13} aria-hidden="true" /> {step.expected_result}</p>}
+          : <p className="island-expected"><Check size={13} aria-hidden="true" /> {check}</p>}
         {correction && <p className="island-correction" role="status">{correction}</p>}
-      </> : <p className="island-action">Every step is finished. Nothing was verified on screen.</p>}
+      </> : <p className="island-action">{state === 'finished'
+        ? 'Every step is finished. Nothing was verified on screen.'
+        : 'Getting your next step ready…'}</p>}
 
       <div className="island-controls">
         {step && !asking && <button className="primary" onClick={props.onClaim}>
           <Check size={15} /> I&rsquo;ve done this
         </button>}
-        {step?.explanation && <details className="island-why">
+        {step && (why || stuck) && <details className="island-why">
           <summary><CircleHelp size={14} /> Why this step?</summary>
-          <p>{step.explanation}</p>
-          {step.fallback && <p><strong>If that doesn&rsquo;t work:</strong> {step.fallback}</p>}
+          {why && <p>{why}</p>}
+          {stuck && <p><strong>If that doesn&rsquo;t work:</strong> {stuck}</p>}
         </details>}
         <div className="island-secondary">
           <button onClick={props.onTogglePause} aria-label={paused ? 'Resume the guide' : 'Pause the guide'}>

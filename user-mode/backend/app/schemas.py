@@ -229,6 +229,78 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class CompletionRequest(Schema):
+    """How a task ends. `achieved` is a claim about evidence, so the engine
+    checks it; `user_reported` is the user's own account and is labelled as one
+    everywhere it appears."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    outcome: Literal["achieved", "user_reported"]
+    self_report: Annotated[str, Field(max_length=1000)] = ""
+
+
+class Summary(Schema):
+    """What happened, with checked work and reported work kept apart."""
+
+    session_id: UUID
+    outcome: Literal["achieved", "user_reported", "stopped", "failed", "expired"]
+    verified_steps: list[UUID]
+    unverified_steps: list[UUID]
+    corrections: list[str]
+    text: str
+    next_action: str | None
+    created_at: datetime
+
+
+class Completed(Schema):
+    session: Session
+    summary: Summary
+
+
+class ImportRequest(Schema):
+    """A conversation the user already had, pasted in. Paste is the only
+    transport: no extension, no connector, no third-party credential (ADR-018)."""
+
+    text: Annotated[str, Field(min_length=20, max_length=32768)]
+    source: Literal["chatgpt", "claude", "gemini", "other"] = "other"
+    category: Category = Category.setup
+    application_key: Annotated[str, Field(max_length=80)] = "unknown"
+
+
+class ImportedConversation(Schema):
+    id: UUID
+    source: Literal["chatgpt", "claude", "gemini", "other"]
+    redactions: int
+    steps_extracted: int
+    steps_blocked: int
+    created_at: datetime
+
+
+class ImportAccepted(Schema):
+    """What an import creates: a task, a session, and work to produce a draft.
+
+    Nothing is confirmed and nothing has started. The plan that arrives is
+    reviewed and confirmed exactly like a generated one.
+    """
+
+    task: Task
+    session: Session
+    operation_id: UUID
+    imported: ImportedConversation
+
+
+class ReplanRequest(Schema):
+    """Ask for a replacement roadmap for whatever is left.
+
+    The reason recorded here is the user's; the planner is given what the session
+    actually recorded — the stuck reason and any observed anomaly — rather than
+    a claim typed by a client.
+    """
+
+    expected_version: Annotated[int, Field(ge=1)]
+    reason: Literal["stuck", "anomaly", "user"] = "user"
+
+
 class VerifyRequest(Schema):
     """Doc 07's verification route needs evidence or an explicit self-report.
     Only the self-report arm exists today: objective checking arrives with the

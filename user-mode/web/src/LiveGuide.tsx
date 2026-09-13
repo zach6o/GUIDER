@@ -7,6 +7,30 @@ import { ImageEditor } from './ImageEditor';
 import { ScreenCapture } from './screenCapture';
 import { ScreenGuideDemo } from './ScreenGuideDemo';
 
+/**
+ * The services a personal key can belong to. Model names live here because the
+ * picker shows them; which one is used is still the backend's decision, checked
+ * against that adapter's capability descriptor.
+ */
+const PROVIDERS = {
+  openai: {
+    label: 'OpenAI', placeholder: 'sk-…',
+    policy: 'https://developers.openai.com/api/docs/guides/your-data',
+    models: [{ id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' }, { id: 'gpt-4.1', label: 'GPT-4.1' }],
+  },
+  anthropic: {
+    label: 'Claude', placeholder: 'sk-ant-…',
+    policy: 'https://www.anthropic.com/legal/privacy',
+    models: [
+      { id: 'claude-opus-5', label: 'Claude Opus 5' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    ],
+  },
+} as const;
+type ProviderId = keyof typeof PROVIDERS;
+const PROVIDER_IDS = Object.keys(PROVIDERS) as ProviderId[];
+
 export function LiveGuide({ onSharingChange }: { onSharingChange: (active: boolean) => void }) {
   const [mode, setMode] = useState<'demo' | 'cloud'>('demo');
   return <>
@@ -29,7 +53,11 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
   const resultPanel = useRef<HTMLDivElement>(null);
   const expiry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gpt-4.1-mini');
+  const [provider, setProvider] = useState<ProviderId>('openai');
+  const [model, setModel] = useState<string>(PROVIDERS.openai.models[0].id);
+  // What the backend said it connected to, rather than what was picked here.
+  const [connectedTo, setConnectedTo] = useState('');
+  const service = PROVIDERS[provider];
   const [consent, setConsent] = useState(false);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -102,14 +130,15 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
     const controller = new AbortController(); connectRequest.current = controller;
     setError(''); setNotice(''); setConnecting(true);
     try {
-      const result = await cloudApi.connect(apiKey.trim(), model, controller.signal);
+      const result = await cloudApi.connect(apiKey.trim(), provider, model, controller.signal);
       if (controller.signal.aborted) { void cloudApi.disconnect(result.connection_token).catch(() => {}); return; }
       token.current = result.connection_token;
       setApiKey(''); setConnected(true);
       expiry.current = setTimeout(() => {
         disconnect(); setNotice('Your 30-minute cloud connection expired. Connect your key again.');
       }, result.expires_in_seconds * 1000);
-      setNotice('OpenAI connected. Now choose the window you want help with.');
+      setConnectedTo(result.display_name);
+      setNotice(`${result.display_name} connected. Now choose the window you want help with.`);
     } catch (error) {
       if (!controller.signal.aborted) setError((error as Error).message);
     } finally {
@@ -201,18 +230,22 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
 
     {!connected ? <section className="cloud-connect" aria-labelledby="connect-title">
       <div className="cloud-intro"><span className="brand-mark"><KeyRound size={23} /></span>
-        <h2 id="connect-title">Connect your OpenAI key.</h2>
+        <h2 id="connect-title">Connect your {service.label} key.</h2>
         <p>Your key connects real vision guidance. It stays in your local backend’s memory for this 30-minute connection and is cleared when you disconnect.</p>
         <div className="connection-facts"><span><CheckCircle2 size={15} /> No account setup required</span><span><ShieldCheck size={15} /> Key never saved to a file</span></div>
       </div>
       <form onSubmit={event => { event.preventDefault(); void connect(); }}>
-        <label>OpenAI API key<input type="password" autoComplete="off" spellCheck={false} placeholder="sk-…" value={apiKey} minLength={20} maxLength={512} onChange={event => setApiKey(event.target.value)} required disabled={connecting} /></label>
-        <label>Vision model<select value={model} onChange={event => setModel(event.target.value)} disabled={connecting}><option value="gpt-4.1-mini">GPT-4.1 mini</option><option value="gpt-4.1">GPT-4.1</option></select></label>
-        <label className="check-label"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} disabled={connecting} />I agree to send reviewed frames to OpenAI using my API account. API charges and OpenAI’s data policies apply.</label>
-        <button className="primary" disabled={!consent || connecting || apiKey.trim().length < 20}>{connecting ? <><LoaderCircle className="spin" size={17} /> Connecting…</> : <>Connect OpenAI <ArrowRight size={17} /></>}</button>
-        <a href="https://developers.openai.com/api/docs/guides/your-data" target="_blank" rel="noreferrer" className="provider-link">Read OpenAI’s data policies</a>
+        <label>Service<select value={provider} onChange={event => {
+          const next = event.target.value as ProviderId;
+          setProvider(next); setModel(PROVIDERS[next].models[0].id);
+        }} disabled={connecting}>{PROVIDER_IDS.map(id => <option key={id} value={id}>{PROVIDERS[id].label}</option>)}</select></label>
+        <label>{service.label} API key<input type="password" autoComplete="off" spellCheck={false} placeholder={service.placeholder} value={apiKey} minLength={20} maxLength={512} onChange={event => setApiKey(event.target.value)} required disabled={connecting} /></label>
+        <label>Vision model<select value={model} onChange={event => setModel(event.target.value)} disabled={connecting}>{service.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label className="check-label"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} disabled={connecting} />I agree to send reviewed frames to {service.label} using my API account. API charges and {service.label}’s data policies apply.</label>
+        <button className="primary" disabled={!consent || connecting || apiKey.trim().length < 20}>{connecting ? <><LoaderCircle className="spin" size={17} /> Connecting…</> : <>Connect {service.label} <ArrowRight size={17} /></>}</button>
+        <a href={service.policy} target="_blank" rel="noreferrer" className="provider-link">Read {service.label}’s data policies</a>
       </form>
-    </section> : <div className="connected-strip"><span><CheckCircle2 size={16} /> OpenAI connected · {model}</span><button onClick={disconnect}><Unplug size={15} /> Disconnect & clear key</button></div>}
+    </section> : <div className="connected-strip"><span><CheckCircle2 size={16} /> {connectedTo || service.label} connected · {model}</span><button onClick={disconnect}><Unplug size={15} /> Disconnect & clear key</button></div>}
 
     <section className="live-workspace" aria-label="Screen guidance workspace">
       <div className="live-goal"><label htmlFor="live-goal">What are you trying to do?</label>

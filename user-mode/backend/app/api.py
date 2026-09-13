@@ -24,14 +24,18 @@ from app.guide.observation import (
 )
 from app.guide.observation import stop as stop_watching
 from app.guide.planner import steps_for
+from app.guide.replan import check_stuck
 from app.guide.steps import (
     confirmed_plan,
     current_instruction,
     owned_step,
     record_claim,
     record_self_report,
+    retire_instructions,
     skip_step,
 )
+from app.guide.summary import require_ending, write_summary
+from app.imports.redact import MAX_TRANSCRIPT, redact
 from app.media import MAX_BYTES, normalize, prepare_frame
 from app.providers.base import ObserveContext
 from app.service import (
@@ -92,6 +96,106 @@ async def create_task(body: s.TaskCreate, request: Request, db: Db, owner: Owner
         task=s.Task.model_validate(task), session=s.Session.model_validate(session)
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 201)
+    return envelope(request, result)
+
+
+@router.post(
+    "/imports/conversations", status_code=202, response_model=s.Envelope[s.ImportAccepted]
+)
+async def import_conversation(
+    body: s.ImportRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Continue from a conversation the user already had somewhere else.
+
+    The text is untrusted data in the SEC-09 sense: it is redacted, stored once
+    for provenance, and read for a goal and candidate steps. What comes back is a
+    draft plan the user confirms, like any other. An import cannot confirm a plan,
+    start a session, switch watching on or change policy (ADR-018).
+    """
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    if len(body.text.encode()) > MAX_TRANSCRIPT:
+        raise GuideError(
+            413, "payload_too_large", "Paste at most 32 KiB of conversation at a time."
+        )
+    await quota(db, m.GuideTask, owner.id, 10, 3600)
+    # Secrets are dropped before the row is written, so nothing that was pasted
+    # by accident is stored even for a moment (ADR-018).
+    transcript, redactions = redact(body.text)
+
+    task = m.GuideTask(
+        id=m.new_id(),
+        owner_id=owner.id,
+        # The real goal comes from the vetted extraction; this is a placeholder the
+        # worker replaces, never anything read out of the transcript.
+        title="Imported conversation",
+        goal="Imported conversation",
+        category=body.category,
+        application_key=body.application_key,
+        expires_at=m.now() + timedelta(days=30),
+    )
+    db.add(task)
+    await db.flush()
+    session = m.GuideSession(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(session)
+    await db.flush()
+    task.current_session_id = session.id
+
+    imported = m.ImportedConversation(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        session_id=session.id,
+        source=body.source,
+        transcript=transcript,
+        redactions=redactions,
+        expires_at=m.now() + timedelta(days=30),
+    )
+    db.add(imported)
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "task.created",
+        request.state.request_id,
+        {"imported": True, "source": body.source, "redactions": redactions},
+    )
+    await transition(db, session, "analyzing", "import_requested", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        session_id=session.id,
+        kind="import",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(
+        db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
+    )
+    result = s.ImportAccepted(
+        task=s.Task.model_validate(task),
+        session=s.Session.model_validate(session),
+        operation_id=operation.id,
+        imported=s.ImportedConversation.model_validate(imported),
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 
 
@@ -374,6 +478,10 @@ async def claim_step(
         raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
     claim = await record_claim(db, session, step, body.statement, request.state.request_id)
     session.last_user_activity_at = m.now()
+    instruction = await current_instruction(db, session)
+    if instruction is not None:
+        # Saying "done" repeatedly on the same step is the guide going nowhere.
+        await check_stuck(db, session, step, instruction, "none", request.state.request_id)
     # Same-state: a claim is not progress, so the session does not move.
     await transition(db, session, session.state, "user_claimed", request.state.request_id)
     result = s.Claimed(
@@ -582,6 +690,132 @@ async def stop_observation(session_id: UUID, request: Request, db: Db, owner: Ow
             db, session, session.state, "observation_stopped", request.state.request_id
         )
     return envelope(request, observation_state(request, session))
+
+
+@router.post("/sessions/{session_id}/completion", response_model=s.Envelope[s.Completed])
+async def complete(
+    session_id: UUID,
+    body: s.CompletionRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """End the task, and say honestly how it ended.
+
+    `achieved` requires evidence for every required step; without it the route
+    refuses and offers the outcome that is true instead. A session that rests on
+    the user's own account ends `user_reported`, and its summary says so
+    (docs 02 F09, 05).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state in TERMINAL:
+        raise GuideError(409, "invalid_transition", "This task has already finished.")
+    await require_ending(db, session, body.outcome)
+
+    session.outcome = body.outcome
+    session.ended_at = m.now()
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "completed", body.outcome, request.state.request_id)
+    summary = await write_summary(
+        db, session, body.outcome, request.state.request_id, body.self_report
+    )
+    task = await db.get(m.GuideTask, session.task_id)
+    if task is not None:
+        task.status = "completed"
+        task.updated_at = m.now()
+    result = s.Completed(
+        session=s.Session.model_validate(session), summary=s.Summary.model_validate(summary)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.get("/sessions/{session_id}/summary", response_model=s.Envelope[s.Summary])
+async def summary_of(session_id: UUID, request: Request, db: Db, owner: Owner):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    if session.state not in TERMINAL:
+        raise GuideError(409, "session_not_terminal", "This task has not finished yet.")
+    summary = await db.scalar(
+        select(m.SessionSummary).where(
+            m.SessionSummary.owner_id == owner.id,
+            m.SessionSummary.session_id == session.id,
+        )
+    )
+    if summary is None:
+        raise not_found()
+    return envelope(request, s.Summary.model_validate(summary))
+
+
+@router.post("/sessions/{session_id}/replan", status_code=202, response_model=s.Envelope[s.Pending])
+async def replan(
+    session_id: UUID,
+    body: s.ReplanRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Ask for a new roadmap for the part that is left.
+
+    What is already done is not up for revision: the replacement carries every
+    settled step across untouched, and only what remains is proposed again. The
+    result is a draft, like every other plan, because a roadmap the user has not
+    seen is not one they agreed to (ADR-010).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    await confirmed_plan(db, session)
+    if await db.scalar(
+        select(m.OperationRow.id).where(
+            m.OperationRow.session_id == session.id,
+            m.OperationRow.status.in_(["queued", "running"]),
+        )
+    ):
+        raise GuideError(409, "operation_in_progress", "An operation is already running.")
+    await quota(db, m.OperationRow, owner.id, 10, 60)
+
+    session.last_user_activity_at = m.now()
+    session.checkpoint_state = session.state
+    # The step being replaced stops being current now: its instruction cannot
+    # outlive the plan version it belongs to.
+    await retire_instructions(db, session)
+    session.current_step_id = None
+    await record_event(
+        db, session, "session.replan_requested", request.state.request_id, {"reason": body.reason}
+    )
+    await transition(db, session, "analyzing", "replan", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="replan",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(
+        db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
+    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
+    return envelope(request, result)
 
 
 @router.post("/sessions/{session_id}/observe", response_model=s.Envelope[s.ObservationTick])
@@ -905,6 +1139,8 @@ async def restrict(
             session.ended_at = m.now()
             await transition(db, session, "stopping", body.reason, request.state.request_id)
             await transition(db, session, "completed", body.reason, request.state.request_id)
+            # A stopped task still has a history entry worth reading (doc 02 F12).
+            await write_summary(db, session, "stopped", request.state.request_id)
         else:
             await transition(db, session, "paused", body.reason, request.state.request_id)
     result = s.Session.model_validate(session)

@@ -1,6 +1,6 @@
 import type {
-  Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, Instruction, Operation, Plan,
-  Screenshot, SelfReported, Session, Step, Task,
+  Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, ImportAccepted, Instruction,
+  Operation, Outcome, Plan, Screenshot, SelfReported, Session, Step, Summary, Task,
 } from './types';
 
 const tasks = new Map<string, Task>();
@@ -13,6 +13,8 @@ const claims = new Map<string, { id: string; step_id: string; status: string; ve
 // Steps the user has said they did. Mirrors a `user_reported` VerificationResult
 // on the server: enough to stop handing the step out, never enough to verify it.
 const selfReported = new Map<string, Set<string>>();
+const stuck = new Set<string>();
+const summaries = new Map<string, Summary>();
 const events = new Map<string, GuideEventPage['items']>();
 
 // Mirrors FIXTURE_PLAN in the backend fixture provider, so the offline demo shows
@@ -36,6 +38,66 @@ const demoSteps = [
     fallback: 'If the prompt does not return, press Ctrl+C and try again.',
     explanation: 'Silence means the package is available to this interpreter. Repeating the error confirms the package is genuinely missing here.' },
 ];
+/**
+ * The same reading and the same refusals the server performs, in the browser.
+ *
+ * Mirrors `app/imports/text.py` and `app/imports/redact.py`: structure only, no
+ * interpretation, recognized secrets dropped before anything is stored, and text
+ * that addresses Guider removed rather than carried into a step. A demo that
+ * accepted an injected instruction the server refuses would teach the wrong
+ * thing in the only place most people look.
+ */
+const INJECTION = new RegExp([
+  'ignore\\s+(all\\s+|any\\s+|the\\s+)?(previous|prior|earlier|above)\\s+(instructions?|messages?|rules?|prompts?)',
+  'disregard\\s+(all\\s+|any\\s+|the\\s+)?(previous|prior|earlier|above)',
+  'you\\s+are\\s+now\\s+',
+  'from\\s+now\\s+on[,:]?\\s+you',
+  '^\\s*(system|developer|assistant)\\s*:',
+  'act\\s+as\\s+(the\\s+)?(system|developer|guider)',
+  'new\\s+instructions?\\s*:',
+  'override\\s+(your|the)\\s+(policy|rules|instructions)',
+].join('|'), 'i');
+const SECRETS: RegExp[] = [
+  /\bsk-ant-[A-Za-z0-9_-]{8,}/gi, /\bsk-[A-Za-z0-9_-]{16,}/gi,
+  /\b(?:AKIA|ASIA)[0-9A-Z]{12,}/g, /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bBearer\s+[A-Za-z0-9._-]{12,}/gi,
+  /\b(api[_\- ]?key|secret|token|password|passwd|pwd)\b\s*[:=]\s*\S+/gi,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@\S+/gi,
+];
+const STEP_MARKER = /^\s*(?:step\s*)?\d{1,2}[.)]\s+(\S.*)$/i;
+const BULLET = /^\s*[-*•]\s+(\S.*)$/;
+const SPEAKER = /^\s*(you|user|me|human|assistant|chatgpt|claude|gemini)\s*:\s*/i;
+// Mirrors RESTRICTED in app/guide/guard.py: a step proposing one of these is
+// kept so the user sees it, and marked blocked so it can never be instructed.
+const RESTRICTED = /\b(install|uninstall|delete|remove|send|publish|push|commit|reset|format|sudo|chmod|chown|password|purchase|payment|transfer|administrator)\b|\b(rm|del|rmdir|Remove-Item|Set-ExecutionPolicy)\s|\bapi\s*key\b/i;
+
+function redactTranscript(text: string): { text: string; redactions: number } {
+  let redactions = 0;
+  let clean = text;
+  for (const pattern of SECRETS) {
+    clean = clean.replace(pattern, match => {
+      redactions++;
+      const labelled = /^([A-Za-z_\- ]+)\s*[:=]/.exec(match);
+      return labelled ? `${labelled[1]}: [removed]` : '[removed]';
+    });
+  }
+  return { text: clean, redactions };
+}
+
+function readTranscript(text: string) {
+  const lines = text.split('\n');
+  const steps = lines
+    .map(line => (STEP_MARKER.exec(line) ?? BULLET.exec(line))?.[1] ?? '')
+    .map(action => action.replace(/\s+/g, ' ').trim())
+    .filter(action => action.length >= 8 && !INJECTION.test(action))
+    .slice(0, 12);
+  const goal = lines
+    .map(line => line.replace(SPEAKER, '').trim())
+    .find(line => line.length >= 12 && !STEP_MARKER.test(line) && !BULLET.test(line)
+      && !INJECTION.test(line)) ?? '';
+  return { goal, steps };
+}
+
 const uid = () => crypto.randomUUID();
 const timestamp = () => new Date().toISOString();
 const expiry = () => new Date(Date.now() + 86_400_000).toISOString();
@@ -69,6 +131,25 @@ function confirmedPlanFor(session: Session): Plan {
 }
 
 const OPEN = ['pending', 'instruction_ready', 'awaiting_user_action', 'user_claimed'];
+const SETTLED = ['verified', 'skipped'];
+// Attempts on one step before the guide says it is going nowhere. Mirrors
+// STUCK_ATTEMPTS in app/guide/replan.py.
+const STUCK_ATTEMPTS = 2;
+// What the fixture planner proposes for whatever is left. Mirrors FIXTURE_REPLAN.
+const demoReplanSteps = [
+  { title: 'Describe what you can see',
+    action: 'Write down what the window shows now, in your own words.',
+    expected_result: 'You have a short description of the current screen.',
+    success_criterion: 'A description of the current screen exists.',
+    fallback: 'If the window is gone, reopen the application first.',
+    explanation: 'The previous steps assumed something that is no longer true. What is on screen now is where a working plan has to start.' },
+  { title: 'Try the last step once more, slowly',
+    action: 'Repeat the step you were on, pausing after each part.',
+    expected_result: 'Either the step works, or you can say exactly where it stops.',
+    success_criterion: 'The step completes, or the point where it fails is identified.',
+    fallback: 'If nothing happens at all, close and reopen the application.',
+    explanation: 'A step that fails halfway looks the same as one that never started. Knowing which it is decides what comes next.' },
+];
 
 function nextOpenStep(session: Session): Step | null {
   const reported = selfReported.get(session.id) ?? new Set<string>();
@@ -131,6 +212,65 @@ function currentStep(session: Session): { instruction: Instruction; step: Step }
   return step ? { instruction, step } : null;
 }
 
+/**
+ * The same summary the server builds, from the same records.
+ *
+ * Mirrors `app/guide/summary.py`: checked steps and reported steps are separate
+ * lists, and the prose says which is which. A demo that told the user "all done"
+ * would erase the distinction everything else here maintains.
+ */
+function writeSummary(session: Session, outcome: Outcome): Summary {
+  const existing = summaries.get(session.id);
+  if (existing) return existing;
+  const plan = [...plans.values()].find(
+    item => item.session_id === session.id && item.status === 'confirmed',
+  );
+  const steps = plan?.steps ?? [];
+  const reported = selfReported.get(session.id) ?? new Set<string>();
+  const verified = steps.filter(step => step.status === 'verified');
+  const told = steps.filter(step => step.status !== 'verified' && reported.has(step.id));
+  const skipped = steps.filter(step => step.status === 'skipped');
+  const blocked = steps.filter(step => step.policy_disposition === 'block');
+  const settled = new Set([...verified, ...told, ...skipped, ...blocked].map(step => step.id));
+  const outstanding = steps.filter(step => !settled.has(step.id));
+
+  const parts = [`${steps.length} step${steps.length === 1 ? '' : 's'} in this plan.`];
+  if (verified.length) {
+    parts.push(`${verified.length} ${verified.length === 1 ? 'was' : 'were'} checked on screen.`);
+  }
+  if (told.length) {
+    parts.push(`${told.length} you told Guider ${told.length === 1 ? 'was' : 'were'} done; nothing checked those.`);
+  }
+  if (skipped.length) {
+    parts.push(`${skipped.length} ${skipped.length === 1 ? 'was' : 'were'} skipped.`);
+  }
+  if (blocked.length) {
+    parts.push(`${blocked.length} need${blocked.length === 1 ? 's' : ''} separate review and Guider did not walk you through ${blocked.length === 1 ? 'it' : 'them'}.`);
+  }
+  if (outstanding.length) {
+    parts.push(`${outstanding.length} ${outstanding.length === 1 ? 'was' : 'were'} never started.`);
+  }
+  if (outcome === 'achieved') parts.push('Every required step was checked.');
+  if (outcome === 'user_reported') parts.push('This is your own account of the work, not a check of it.');
+  if (outcome === 'stopped') parts.push('You stopped this task.');
+
+  const summary: Summary = {
+    session_id: session.id, outcome,
+    verified_steps: verified.map(step => step.id),
+    unverified_steps: [...told, ...skipped, ...outstanding].map(step => step.id),
+    corrections: [
+      ...skipped.map(step => `Step ${step.ordinal} was skipped: ${step.title}`),
+      ...blocked.map(step => `Step ${step.ordinal} needs separate review: ${step.title}`),
+      ...outstanding.map(step => `Step ${step.ordinal} was never started: ${step.title}`),
+    ],
+    text: parts.join(' '),
+    next_action: blocked.length ? `Step ${blocked[0].ordinal} still needs separate review.` : null,
+    created_at: timestamp(),
+  };
+  summaries.set(session.id, summary);
+  return summary;
+}
+
 function instructOperation(): Operation {
   const operation: Operation = {
     id: uid(), kind: 'instruct', status: 'succeeded', result: null, error: null,
@@ -149,6 +289,69 @@ export const demoApi: GuideApi = {
     task.current_session_id = session.id;
     tasks.set(task.id, task); sessions.set(session.id, session);
     return clone({ task, session });
+  },
+  async importConversation(text, source) {
+    const { text: transcript, redactions } = redactTranscript(text);
+    const { goal, steps } = readTranscript(transcript);
+    if (!goal || !steps.length) {
+      throw new Error(
+        'Guider could not find a goal and steps in that text. '
+        + 'Paste the part of the conversation with the steps in it.',
+      );
+    }
+    const task: Task = {
+      id: uid(), title: goal.slice(0, 120), goal, category: 'setup',
+      application_key: 'unknown', status: 'open', current_session_id: null,
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    const session: Session = {
+      id: uid(), task_id: task.id, state: 'task_created', state_version: 1, control_epoch: 1,
+      observation_mode: 'screenshot_only', outcome: null, current_step_id: null,
+      created_at: timestamp(), expires_at: expiry(),
+    };
+    task.current_session_id = session.id;
+    tasks.set(task.id, task); sessions.set(session.id, session);
+
+    const plan: Plan = {
+      id: uid(), task_id: task.id, session_id: session.id, version: 1, status: 'draft',
+      assumptions: [
+        'Read from the conversation you pasted, word for word. '
+        + 'Nothing here was checked against your screen.',
+      ],
+      policy_version: 'development-1', confirmed_at: null,
+      steps: steps.map((action, index) => ({
+        id: uid(), ordinal: index + 1, title: action.slice(0, 120), action,
+        expected_result: '', success_criterion: action.slice(0, 500), fallback: '',
+        explanation: 'Taken word for word from the conversation you pasted.',
+        application_key: 'unknown', risk: RESTRICTED.test(action) ? 'high' as const : 'low' as const,
+        // The guard's verdict, not the transcript's: a restricted action is shown
+        // and blocked rather than quietly dropped.
+        policy_disposition: RESTRICTED.test(action) ? 'block' as const : 'allow' as const,
+        evidence_kind: 'self_report' as const, required: true, status: 'pending',
+        attempt_count: 0, verified_at: null,
+      })),
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    plans.set(plan.id, plan);
+    move(session, 'analyzing', 'import_requested');
+    move(session, 'plan_ready', 'import_ready');
+    emit(session, 'plan.ready', { plan_id: plan.id, imported: true, source });
+    move(session, 'awaiting_user_confirmation', 'import_published');
+
+    const operation: Operation = {
+      id: uid(), kind: 'plan', status: 'succeeded', result: null,
+      result_id: plan.id, error: null,
+    };
+    operations.set(operation.id, operation);
+    return clone<ImportAccepted>({
+      task, session, operation_id: operation.id,
+      imported: {
+        id: uid(), source, redactions,
+        steps_extracted: plan.steps.length,
+        steps_blocked: plan.steps.filter(step => step.policy_disposition === 'block').length,
+        created_at: timestamp(),
+      },
+    });
   },
   async history() {
     return clone({ items: [...sessions.values()].reverse().map(session => ({ session,
@@ -255,7 +458,47 @@ export const demoApi: GuideApi = {
   async stop(id) {
     const session = requireItem(sessions, id);
     session.state = 'completed'; session.outcome = 'stopped'; session.state_version++;
+    // A stopped task still has something worth reading in history.
+    writeSummary(session, 'stopped');
     return clone(session);
+  },
+  async complete(session, outcome, said) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    if (current.state === 'completed') throw new Error('This task has already finished.');
+    const plan = [...plans.values()].find(
+      item => item.session_id === current.id && item.status === 'confirmed',
+    );
+    if (!plan) throw new Error('There is no confirmed plan to finish.');
+    const reported = selfReported.get(current.id) ?? new Set<string>();
+    const required = plan.steps.filter(step => step.required);
+    // `achieved` is a claim about evidence, so it is checked rather than taken.
+    if (outcome === 'achieved' && !required.every(step => step.status === 'verified')) {
+      throw new Error(
+        'Some steps have not been checked. Finish as your own account instead, '
+        + 'or check the rest first.',
+      );
+    }
+    if (outcome === 'user_reported' && !required.every(step => step.policy_disposition !== 'block'
+      && (step.status === 'verified' || step.status === 'skipped' || reported.has(step.id)))) {
+      throw new Error(
+        'Some steps are still open, or need separate review. Skip what you are not doing first.',
+      );
+    }
+    current.outcome = outcome;
+    move(current, 'completed', outcome);
+    const summary = writeSummary(current, outcome);
+    if (said.trim()) summary.corrections = [...summary.corrections, `You said: ${said.trim()}`];
+    const task = tasks.get(current.task_id);
+    if (task) task.status = 'completed';
+    return clone({ session: current, summary });
+  },
+  async summary(id) {
+    const session = requireItem(sessions, id);
+    if (session.state !== 'completed') return null;
+    return clone(summaries.get(id) ?? null);
   },
   async start(session) {
     const current = requireItem(sessions, session.id);
@@ -297,6 +540,12 @@ export const demoApi: GuideApi = {
     // A claim is the user's word: the step records it and nothing advances.
     found.step.status = 'user_claimed'; found.step.attempt_count++;
     emit(current, 'step.user_claimed', { step_id: stepId, claim_id: claim.id, verified: false });
+    // Saying done repeatedly on one step is the guide going nowhere. Said once,
+    // and it changes no state, exactly as the server does it.
+    if (found.step.attempt_count >= STUCK_ATTEMPTS && !stuck.has(current.id)) {
+      stuck.add(current.id);
+      emit(current, 'session.stuck_detected', { step_id: stepId, reason: 'repeated_attempts' });
+    }
     move(current, current.state, 'user_claimed');
     return clone<Claimed>({
       claim_id: claim.id, step: found.step, session: current, verified: false,
@@ -349,6 +598,84 @@ export const demoApi: GuideApi = {
     return clone({
       step: found.step, session: current, next_operation_id: instructOperation().id,
     });
+  },
+  async replan(session, reason) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    if (current.state !== 'awaiting_user_action') throw new Error('There is no step waiting on you.');
+    const previous = confirmedPlanFor(current);
+    const reported = selfReported.get(current.id) ?? new Set<string>();
+    const done = previous.steps.filter(
+      step => SETTLED.includes(step.status) || reported.has(step.id),
+    );
+
+    retireInstructions(current);
+    current.current_step_id = null;
+    emit(current, 'session.replan_requested', { reason });
+    move(current, 'analyzing', 'replan');
+
+    for (const plan of plans.values()) {
+      if (plan.session_id === current.id) plan.status = 'superseded';
+    }
+    const version = [...plans.values()].filter(item => item.session_id === current.id).length + 1;
+    const replacement: Plan = {
+      id: uid(), task_id: current.task_id, session_id: current.id, version, status: 'draft',
+      assumptions: [
+        'This replacement roadmap comes from a development fixture, not from a planner.',
+        `Asked for because the task was ${reason}.`,
+        `${done.length} earlier step(s) are already done and are kept as they are.`,
+      ],
+      policy_version: 'development-1', confirmed_at: null,
+      steps: [
+        // Carried across exactly as they were, pointing back at the originals.
+        ...done.map(step => ({ ...step, id: uid(), previous_step_id: step.id })),
+        ...demoReplanSteps.map(step => ({
+          ...step, id: uid(), ordinal: 0, application_key: previous.steps[0].application_key,
+          risk: 'low' as const, policy_disposition: 'allow' as const,
+          evidence_kind: 'visual' as const, required: true, status: 'pending',
+          attempt_count: 0, verified_at: null,
+        })),
+      ].map((step, index) => ({ ...step, ordinal: index + 1 })),
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    plans.set(replacement.id, replacement);
+    // A self-reported step stays self-reported on its copy.
+    for (const step of replacement.steps) {
+      const origin = (step as { previous_step_id?: string }).previous_step_id;
+      if (origin && reported.has(origin)) reported.add(step.id);
+    }
+    selfReported.set(current.id, reported);
+    stuck.delete(current.id);
+
+    move(current, 'plan_ready', 'replan_ready');
+    emit(current, 'plan.ready', { plan_id: replacement.id, reason, carried_steps: done.length });
+    move(current, 'awaiting_user_confirmation', 'replan_published');
+    emit(current, 'plan.confirmation_required', {
+      plan_id: replacement.id, version: replacement.version,
+    });
+    const operation: Operation = {
+      id: uid(), kind: 'plan', status: 'succeeded', result: null,
+      result_id: replacement.id, error: null,
+    };
+    operations.set(operation.id, operation);
+    return clone({ operation_id: operation.id, session: current });
+  },
+  // Watching needs a vision provider, and this demo is a browser tab with no
+  // backend and no provider. Refusing is the only honest answer: a simulated
+  // verdict about a real screen would be an invented observation.
+  async startWatching() {
+    throw new Error(
+      'Watching a window needs a signed-in task on a running Guider backend. '
+      + 'This demo guides you step by step instead.',
+    );
+  },
+  async stopWatching() {
+    throw new Error('Watching was never switched on in this demo.');
+  },
+  async observe() {
+    throw new Error('This demo never looks at your screen.');
   },
   async events(id, after, waitMs) {
     const log = events.get(id) ?? [];

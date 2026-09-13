@@ -258,6 +258,54 @@
         "title": "Claimed",
         "description": "A claim is the user's word. `verified` is always false here: only evidence\ncan verify a step, and that is a separate record (ADR-010)."
       },
+      "Completed": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/Summary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session",
+          "summary"
+        ],
+        "title": "Completed"
+      },
+      "CompletionRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "achieved",
+              "user_reported"
+            ],
+            "title": "Outcome"
+          },
+          "self_report": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Self Report",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "outcome"
+        ],
+        "title": "CompletionRequest",
+        "description": "How a task ends. `achieved` is a claim about evidence, so the engine\nchecks it; `user_reported` is the user's own account and is labelled as one\neverywhere it appears."
+      },
       "ConfirmRequest": {
         "properties": {
           "expected_version": {
@@ -306,14 +354,17 @@
             "title": "Api Key",
             "writeOnly": true
           },
+          "provider": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Provider",
+            "default": ""
+          },
           "model": {
             "type": "string",
-            "enum": [
-              "gpt-4.1-mini",
-              "gpt-4.1"
-            ],
+            "maxLength": 80,
             "title": "Model",
-            "default": "gpt-4.1-mini"
+            "default": ""
           },
           "accepted_cloud_terms": {
             "type": "boolean",
@@ -327,7 +378,8 @@
           "api_key",
           "accepted_cloud_terms"
         ],
-        "title": "ConnectInput"
+        "title": "ConnectInput",
+        "description": "A key, and which service it belongs to. The model list is the adapter's,\nchecked by its capability descriptor rather than spelled out here."
       },
       "ConnectOutput": {
         "properties": {
@@ -335,12 +387,16 @@
             "type": "string",
             "title": "Connection Token"
           },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
           "model": {
             "type": "string",
-            "enum": [
-              "gpt-4.1-mini",
-              "gpt-4.1"
-            ],
             "title": "Model"
           },
           "expires_in_seconds": {
@@ -352,6 +408,8 @@
         "type": "object",
         "required": [
           "connection_token",
+          "provider",
+          "display_name",
           "model",
           "expires_in_seconds"
         ],
@@ -484,6 +542,25 @@
         ],
         "title": "Envelope[Claimed]"
       },
+      "Envelope_Completed_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Completed"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Completed]"
+      },
       "Envelope_ConfirmedPlan_": {
         "properties": {
           "data": {
@@ -578,6 +655,25 @@
           "request_id"
         ],
         "title": "Envelope[EventPage]"
+      },
+      "Envelope_ImportAccepted_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ImportAccepted"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ImportAccepted]"
       },
       "Envelope_ObservationState_": {
         "properties": {
@@ -749,6 +845,25 @@
           "request_id"
         ],
         "title": "Envelope[Skipped]"
+      },
+      "Envelope_Summary_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Summary"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Summary]"
       },
       "Envelope_Task_": {
         "properties": {
@@ -986,6 +1101,119 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImportAccepted": {
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Operation Id"
+          },
+          "imported": {
+            "$ref": "#/components/schemas/ImportedConversation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task",
+          "session",
+          "operation_id",
+          "imported"
+        ],
+        "title": "ImportAccepted",
+        "description": "What an import creates: a task, a session, and work to produce a draft.\n\nNothing is confirmed and nothing has started. The plan that arrives is\nreviewed and confirmed exactly like a generated one."
+      },
+      "ImportRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 20,
+            "title": "Text"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source",
+            "default": "other"
+          },
+          "category": {
+            "$ref": "#/components/schemas/Category",
+            "default": "setup"
+          },
+          "application_key": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Application Key",
+            "default": "unknown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ImportRequest",
+        "description": "A conversation the user already had, pasted in. Paste is the only\ntransport: no extension, no connector, no third-party credential (ADR-018)."
+      },
+      "ImportedConversation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source"
+          },
+          "redactions": {
+            "type": "integer",
+            "title": "Redactions"
+          },
+          "steps_extracted": {
+            "type": "integer",
+            "title": "Steps Extracted"
+          },
+          "steps_blocked": {
+            "type": "integer",
+            "title": "Steps Blocked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "redactions",
+          "steps_extracted",
+          "steps_blocked",
+          "created_at"
+        ],
+        "title": "ImportedConversation"
       },
       "Instruction": {
         "properties": {
@@ -1525,6 +1753,32 @@
           "expected_version"
         ],
         "title": "PlanRequest"
+      },
+      "ReplanRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "stuck",
+              "anomaly",
+              "user"
+            ],
+            "title": "Reason",
+            "default": "user"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReplanRequest",
+        "description": "Ask for a replacement roadmap for whatever is left.\n\nThe reason recorded here is the user's; the planner is given what the session\nactually recorded \u2014 the stuck reason and any observed anomaly \u2014 rather than\na claim typed by a client."
       },
       "Screenshot": {
         "properties": {
@@ -2133,6 +2387,83 @@
           "reason"
         ],
         "title": "StopRequest"
+      },
+      "Summary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "achieved",
+              "user_reported",
+              "stopped",
+              "failed",
+              "expired"
+            ],
+            "title": "Outcome"
+          },
+          "verified_steps": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Verified Steps"
+          },
+          "unverified_steps": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Unverified Steps"
+          },
+          "corrections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Corrections"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "outcome",
+          "verified_steps",
+          "unverified_steps",
+          "corrections",
+          "text",
+          "next_action",
+          "created_at"
+        ],
+        "title": "Summary",
+        "description": "What happened, with checked work and reported work kept apart."
       },
       "Task": {
         "properties": {

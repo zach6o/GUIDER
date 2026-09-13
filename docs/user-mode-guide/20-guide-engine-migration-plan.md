@@ -111,15 +111,16 @@ Each item is one pull request. Exit gates are additions to [16](16-testing-strat
 | 13 | `POST /sessions/{id}/observe`, observer role, per-session semaphore, budgets, confidence bands | A 10-minute simulated session stays under 90 observation calls; exhaustion falls back to manual checking |
 | 14 | Continuous-observation consent, live frame counter, one-tap stop incrementing `control_epoch` | Stop revokes in-flight work; counter matches server-side count |
 | 14b | The island runs a server session: start, the published instruction, claim, self-report, skip and the event stream. `POST /sessions/{id}/steps/{step_id}/verifications`, self-report arm only | A whole plan is guided from the server with nothing marked verified; the island renders the engine's instruction, not the plan text |
-| 15 | Stuck detection and the replanner; `POST /sessions/{id}/replan` regenerating remaining steps only | Anomaly injection replans without touching verified steps |
+| 14c | The consent surface: notice, window choice, mask-once, the tier-2 send loop, the server's frame counter and one-tap stop | Nothing is sent before the notice is accepted and a window chosen; hidden areas are painted out before encoding; running out keeps the guide working |
+| 15 | Stuck detection and the replanner; `POST /sessions/{id}/replan` regenerating remaining steps only. Doc 05 gains the `awaiting_user_action → analyzing` row; the replacement is a draft the user confirms | Anomaly injection replans without touching verified steps |
 
 ### Phase 4 · Breadth — proving the abstractions
 
 | PR | Work | Exit gate |
 |---|---|---|
-| 16 | Anthropic adapter plus a provider matrix test running identical fixtures through every adapter | Zero provider-specific branches outside `app/providers/` |
-| 17 | Conversation import, paste-first, guarded, producing a draft plan ([ADR-018](adr/018-imported-conversation-context.md)) | An instruction injected inside a pasted transcript is caught by the guard |
-| 18 | Session summary and completed-guide history | Verified and self-reported steps are visibly distinguished |
+| 16 | Anthropic adapter plus a provider matrix test running identical fixtures through every adapter. The BYOK connection records which provider it belongs to; `Settings` becomes provider-neutral | Zero provider-specific branches outside `app/providers/`, enforced by a test that reads the source |
+| 17 | Conversation import, paste-first, guarded, producing a draft plan ([ADR-018](adr/018-imported-conversation-context.md)). `imported_conversations`, secrets redacted at import, provenance shown on the plan | An instruction injected inside a pasted transcript is caught by the guard; a restricted action is shown and blocked rather than dropped |
+| 18 | Session summary and completed-guide history. `session_summaries`; `POST /sessions/{id}/completion` checks `achieved` against the evidence | Verified and self-reported steps are visibly distinguished, in the record and on screen |
 
 ## Risks and open decisions
 

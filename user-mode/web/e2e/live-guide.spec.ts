@@ -168,3 +168,23 @@ test('cancel check keeps sharing and waits for cancellation before a replacement
   expect(sent[2].previous_step).toBe(guidance.next_step);
   expect(sent[2].question).toBe('I see Python 3.13.');
 });
+
+test('the key can belong to either service, and the page says which', async ({ page }) => {
+  await page.goto('/#live');
+  await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
+
+  // Whatever is offered, the page asks for that service's key and its models.
+  await expect(page.getByLabel('OpenAI API key')).toBeVisible();
+  await page.getByLabel('Service').selectOption('anthropic');
+
+  await expect(page.getByLabel('Claude API key')).toBeVisible();
+  await expect(page.getByLabel('Vision model')).toHaveValue('claude-opus-5');
+  await expect(page.getByRole('checkbox', { name: /reviewed frames to Claude/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect Claude' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Claude.s data policies/ })).toBeVisible();
+
+  // And switching back restores the other one, key field included.
+  await page.getByLabel('Service').selectOption('openai');
+  await expect(page.getByLabel('OpenAI API key')).toBeVisible();
+  await expect(page.getByLabel('Vision model')).toHaveValue('gpt-4.1-mini');
+});

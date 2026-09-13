@@ -45,11 +45,22 @@ class Guidance(Schema):
 
 
 class PlanContext(Schema):
-    """Everything a planner may see. No screen content and no account data."""
+    """Everything a planner may see. No screen content and no account data.
+
+    Replanning adds only what the planner needs to avoid repeating work: the
+    titles of steps already behind the guide, why a new plan was asked for, and
+    the anomaly an observer reported, if any. Titles are the planner's own
+    earlier words, not anything read from the user's screen.
+    """
 
     goal: str = Field(min_length=1, max_length=4000)
     category: str = Field(max_length=30)
     application_key: str = Field(max_length=80)
+    reason: Literal["initial", "stuck", "anomaly", "user"] = "initial"
+    completed: list[Annotated[str, Field(max_length=120)]] = Field(max_length=12, default=[])
+    anomaly: Literal[
+        "none", "different_os", "different_app", "outdated_ui", "error_dialog", "unreadable"
+    ] = "none"
 
 
 class ProposedStep(Schema):
@@ -124,6 +135,31 @@ class ObserveResult(Schema):
     note: str = Field(max_length=200)
 
 
+class ImportContext(Schema):
+    """A transcript the user pasted, and where they say it came from.
+
+    Untrusted in full. An importer reads it the way it would read text off a
+    screenshot: as evidence about what the user wants, never as instructions
+    (ADR-018, SEC-09).
+    """
+
+    transcript: str = Field(min_length=1, max_length=32768)
+    source: Literal["chatgpt", "claude", "gemini", "other"] = "other"
+
+
+class ImportedTask(Schema):
+    """What an importer may propose: a goal and a candidate roadmap.
+
+    There is deliberately nothing here that could start anything. No confirmed
+    plan, no session, no provider or policy field — an import ends in a draft the
+    user confirms, like every other plan (ADR-010, ADR-018).
+    """
+
+    goal: str = Field(min_length=1, max_length=4000)
+    application_key: str = Field(max_length=80, default="unknown")
+    plan: ProposedPlan
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """What an adapter can do. The registry selects on this, never on `id`."""
@@ -137,9 +173,22 @@ class CapabilityDescriptor:
     cost_tier: CostTier
     byok_only: bool
     local: bool
+    # Model names live with the adapter that understands them, so nothing
+    # outside this package has to know one provider's names from another's.
+    models: tuple[str, ...] = ()
+    default_model: str = ""
 
     def supports(self, role: Role) -> bool:
         return role in self.roles
+
+    def model_or_default(self, model: str) -> str:
+        """The model to use, or a refusal that names neither provider nor model."""
+        chosen = model or self.default_model
+        if self.models and chosen not in self.models:
+            raise GuideError(
+                422, "model_unavailable", "That model is not available for this connection."
+            )
+        return chosen
 
 
 class AnalysisProvider(Protocol):
@@ -169,6 +218,14 @@ class VisionObserver(Protocol):
     async def observe(self, ctx: ObserveContext, image: bytes) -> ObserveResult: ...
 
 
+class ConversationImporter(Protocol):
+    """Role `import`: a pasted transcript to a proposed goal and roadmap. Cannot
+    confirm a plan, start a session or take anything in the text as an
+    instruction (ADR-018)."""
+
+    async def import_conversation(self, ctx: ImportContext) -> ImportedTask: ...
+
+
 class LiveGuidanceProvider(Protocol):
     """Role `guide`: one reviewed frame to one validated next step, under a
     caller-supplied credential that this process never persists."""
@@ -180,22 +237,26 @@ class LiveGuidanceProvider(Protocol):
     ) -> Guidance: ...
 
 
-def provider_error(status: int) -> GuideError:
+def provider_error(status: int, provider: str = "OpenAI") -> GuideError:
+    """One refusal shape for every adapter. The name is the provider's own, so a
+    message can say who refused without any caller branching on which one."""
     if status in {401, 403}:
         return GuideError(
-            401, "openai_key_rejected", "OpenAI rejected this key or its permissions."
+            401, "openai_key_rejected", f"{provider} rejected this key or its permissions."
         )
     if status == 429:
         return GuideError(
             429,
             "openai_limit",
-            "OpenAI's usage limit was reached. Check your API billing and limits.",
+            f"{provider}'s usage limit was reached. Check your API billing and limits.",
         )
     if status == 404:
         return GuideError(422, "model_unavailable", "This model is not available for your API key.")
+    # The codes keep their original spelling: the web client already branches on
+    # `openai_key_rejected`, and renaming a wire code is a contract change.
     return GuideError(
         503,
         "openai_unavailable",
-        "OpenAI could not complete this request. Try again.",
+        f"{provider} could not complete this request. Try again.",
         retryable=True,
     )

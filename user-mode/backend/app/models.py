@@ -292,6 +292,80 @@ class VerificationResult(Owned, Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
+OUTCOMES = ("achieved", "user_reported", "stopped", "failed", "expired")
+
+
+class SessionSummary(Owned, Base):
+    """What happened, written down once when a session ends.
+
+    The distinction the whole record exists for: `verified_steps` are steps
+    something checked, and `unverified_steps` are steps the user said were done.
+    A summary that blurred the two would undo what ADR-010 and the verification
+    model are for, so they are separate columns rather than one list with a flag.
+    """
+
+    __tablename__ = "session_summaries"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        # One session, one summary: it describes an ending, and there is one.
+        UniqueConstraint("owner_id", "session_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"outcome IN {OUTCOMES}", name="session_summaries_outcome"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    outcome: Mapped[str]
+    verified_steps: Mapped[list] = mapped_column(JSON, default=list)
+    unverified_steps: Mapped[list] = mapped_column(JSON, default=list)
+    corrections: Mapped[list] = mapped_column(JSON, default=list)
+    text: Mapped[str] = mapped_column(String(4000), default="")
+    next_action: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(default="ready")
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
+IMPORT_SOURCES = ("chatgpt", "claude", "gemini", "other")
+
+
+class ImportedConversation(Owned, Base):
+    """One pasted transcript, kept for provenance and nothing else.
+
+    Untrusted data in exactly the sense of SEC-09: nothing in `transcript` is an
+    instruction, whatever it claims about itself. It is stored redacted, once,
+    under retention class H, and is erased with the task it belongs to
+    ([ADR-018](../../../docs/user-mode-guide/adr/018-imported-conversation-context.md)).
+    """
+
+    __tablename__ = "imported_conversations"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        # One import per session: the draft it produced is the session's plan.
+        UniqueConstraint("owner_id", "session_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "task_id"],
+            ["guide_tasks.owner_id", "guide_tasks.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"source IN {IMPORT_SOURCES}", name="imported_conversations_source"),
+    )
+    task_id: Mapped[str] = mapped_column(String(36), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    source: Mapped[str] = mapped_column(default="other")
+    # Redacted at import. Recognized secrets are dropped rather than stored.
+    transcript: Mapped[str] = mapped_column(String(32768))
+    redactions: Mapped[int] = mapped_column(default=0)
+    extracted_goal: Mapped[str] = mapped_column(String(4000), default="")
+    steps_extracted: Mapped[int] = mapped_column(default=0)
+    steps_blocked: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
 class ScreenshotRow(Owned, Base):
     __tablename__ = "screenshots"
     __table_args__ = (

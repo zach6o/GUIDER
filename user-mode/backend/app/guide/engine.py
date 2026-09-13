@@ -84,8 +84,17 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     "capturing": frozenset({"processing"}),
     "processing": frozenset({"instruction_ready", "verifying", "awaiting_user_action"}),
     "instruction_ready": frozenset({"awaiting_user_action"}),
+    # `analyzing` is the replan row: a stuck or mismatched guide may ask for a
+    # replacement roadmap, which lands as a draft for the user to confirm.
     "awaiting_user_action": frozenset(
-        {"verifying", "capturing", "processing", "completed", "awaiting_user_confirmation"}
+        {
+            "verifying",
+            "capturing",
+            "processing",
+            "analyzing",
+            "completed",
+            "awaiting_user_confirmation",
+        }
     ),
     "verifying": frozenset({"active", "awaiting_user_action", "completed"}),
     # Resume returns to a stable checkpoint, or asks for permission again. A

@@ -284,3 +284,17 @@ async def test_the_fixture_observer_reports_no_evidence_rather_than_inventing_it
     assert result.step_complete is False
     assert result.confidence == 0
     assert band(result) == "wait"
+
+
+def test_the_shape_the_browser_actually_sends_is_accepted():
+    """`overlay/frameSource.ts` encodes JPEG at up to 1,280 pixels a side. The
+    route has to accept that, not only the PNG the other tests use."""
+    from app.media import prepare_frame
+
+    image = Image.new("RGB", (1280, 800), "#1b2620")
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=80)
+    encoded = base64.b64encode(out.getvalue()).decode()
+
+    pixels = prepare_frame(encoded)
+    assert pixels[1:4] == b"PNG"  # normalized to PNG, whatever arrived

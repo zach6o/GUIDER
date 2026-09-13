@@ -15,6 +15,7 @@ from datetime import timedelta
 from app import models as m
 from app.errors import GuideError
 from app.guide.engine import record_event, transition
+from app.guide.replan import check_stuck
 
 # Per-session ceilings from ADR-016. Enforced again here because the browser's
 # limiter is advice: it runs on the user's machine and can be bypassed.
@@ -47,7 +48,9 @@ async def enable(db, session: m.GuideSession, consent_version: str, request_id: 
             409,
             "consent_version_mismatch",
             "The notice about watching has changed. Read it again before switching this on.",
-            details={"current_version": None},
+            # Name the version the client must show, so it can present the new
+            # notice rather than guessing what changed.
+            details={"current_version": NOTICE_VERSION},
         )
     session.observation_active = True
     session.observation_mode = "window"
@@ -170,6 +173,9 @@ async def apply(
         },
     )
     if decision != "advance":
+        # A screen that stopped matching the plan, or a step that is going
+        # nowhere, is worth saying once. It changes no state by itself.
+        await check_stuck(db, session, step, instruction, result.anomaly, request_id)
         return decision
 
     # awaiting_user_action -> verifying on accepted new evidence, per doc 05.

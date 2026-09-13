@@ -1,5 +1,165 @@
 # 19 · Implementation status and session handoff
 
+## Session summary and completed-guide history: 2026-09-13
+
+A task can now end, and the record says honestly how it ended.
+
+`POST /sessions/{id}/completion` takes `achieved` or `user_reported`. `achieved` is a claim about
+evidence, so the engine checks it: every required step must be `verified`, and a session resting on
+the user's own word is refused with `verification_required` and offered the outcome that is true
+instead. `user_reported` needs every required step dealt with — verified, self-reported or
+explicitly skipped — and none of them blocked, because a step Guider refused to instruct is not
+something a user can report their way past. `GET /sessions/{id}/summary` reads it back; stopping a
+task writes one too, so history is never blank (doc 02 F12).
+
+`app/guide/summary.py` builds the summary deterministically from the records rather than asking a
+model, and keeps the distinction in its shape: `verified_steps` and `unverified_steps` are separate
+columns, and the prose says which is which — "1 was checked on screen. 2 you told Guider were done;
+nothing checked those." Skipped, blocked and never-started steps are named in `corrections` rather
+than folded into a count.
+
+The island offers "Finish this task" only once the plan has run out, and the web summary screen
+shows each step with its own label: checked on screen, you reported this, needs separate review, or
+not started. Finished tasks open their summary from history. The browser demo builds the same
+summary from the same records, and refuses `achieved` the same way.
+
+Phase 4 of [20](20-guide-engine-migration-plan.md) is complete.
+
+Current verification: 308 backend tests pass and 2 skip on SQLite, 105 web unit tests pass, and 41
+browser scenarios pass in installed Chrome.
+
+## Importing a conversation: 2026-09-13
+
+`POST /imports/conversations` takes a pasted transcript and produces a draft plan. Paste is the
+only transport, as ADR-018 requires: no extension, no connector, no third-party credential. The
+route redacts recognized secrets before the row is written, stores the transcript once for
+provenance under retention class H, creates a task and session, and queues an Operation of the new
+kind `import`. The worker asks the `import` role, vets the result, and publishes a draft the user
+confirms exactly like a generated plan. An import confirms nothing, starts nothing, switches nothing
+on.
+
+Pasted text is data. `app/imports/text.py` holds the injection check for this surface: a line that
+addresses Guider — "ignore previous instructions", a fake `SYSTEM:` turn, "you are now" — is skipped
+when the goal is read and dropped when it appears as a step, because there is nothing in such a step
+for a user to review. A *restricted action* is treated differently on purpose: it is kept and marked
+`block` by `step_policy`, so the user sees that the conversation suggested `sudo rm -rf` and that
+Guider will not walk them through it.
+
+The fixture importer is a parser, not a reader: numbered and bulleted lines become steps with the
+same words, the user's own opening line becomes the goal, and the plan says so in its assumptions.
+The Anthropic adapter serves the same role for a configured provider, with the transcript marked as
+untrusted in its brief.
+
+`app/imports/redact.py` drops provider keys, bearer tokens, labelled credentials, private key blocks
+and connection strings carrying inline passwords, and the count is shown to the user. It is a net,
+not a guarantee — the 32 KiB cap and the 30-day retention are what limit the rest.
+
+The provider gate from PR-16 was narrowed while doing this: it now forbids adapter classes, adapter
+modules and model names outside `app/providers/` — dispatch — and allows a vendor name only in
+`app/imports/`, or on a line declaring the import's `source`. That is provenance the user chose,
+not a branch on who answered.
+
+Current verification: 291 backend tests pass and 2 skip on SQLite, 99 web unit tests pass, and 37
+browser scenarios pass in installed Chrome.
+
+## A second provider, and the gate that proves the abstraction: 2026-09-13
+
+`app/providers/anthropic.py` serves the `guide`, `observe`, `plan` and `instruct` roles against the
+Anthropic Messages API: `x-api-key` with `anthropic-version`, the frame as a base64 image block,
+and `output_config.format` carrying the same internal schema every other adapter is rendered from.
+`schema.py` gained the `native` dialect for it, which closes the schema to undeclared keys rather
+than passing a separate strict flag. Raw httpx, like the OpenAI adapter: the suite drives both by
+injecting a transport, the dependency set is locked, and one adapter written a different way would
+split how the two are tested. No request in the suite leaves the machine.
+
+Models offered are `claude-opus-5` (the default), `claude-sonnet-5` and `claude-haiku-4-5`. A
+refusal (`stop_reason: "refusal"`) and a truncated answer (`max_tokens`) are each reported as what
+they are; neither becomes a verdict.
+
+Proving ADR-017 turned out to mean fixing three leaks the gate test found. `app/cloud.py` imported
+the OpenAI adapter and defaulted its model to an OpenAI name; a connection now records *which*
+provider it belongs to and the registry builds the adapter per call, with the model validated by
+that adapter's capability descriptor. `Settings` gained `provider_id` / `provider_api_key` /
+`provider_model` rather than anything provider-named, and the registry is built per app from those
+settings instead of read at import time. The fixture is still registered first, so with no
+credentials every role resolves to it and reaches no network.
+
+The local guide screen now asks which service a personal key belongs to, and shows what the backend
+said it connected to rather than what was picked in the form.
+
+`tests/test_provider_matrix.py` runs identical fixtures through every adapter serving a role and
+holds each answer to the same schema and the same guard, then reads `app/**.py` and fails if
+anything outside `app/providers/` names a provider at all. That last test is the phase-4 exit gate,
+written as a test rather than a claim.
+
+Not proven: no real Anthropic request has been made. Every answer in the suite is a recorded shape
+replayed through an injected transport, and account-mode provider access stays a development switch
+until D01 selects a provider.
+
+Current verification: 266 backend tests pass and 2 skip on SQLite, 94 web unit tests pass, and 32
+browser scenarios pass in installed Chrome.
+
+## Stuck detection and the replanner: 2026-09-13
+
+A guide can now say that it is going nowhere, and offer a different plan for what is left.
+
+Three things count as stuck, and all of them are reported rather than acted on: an observer
+reporting `different_os`, `different_app` or `outdated_ui`; the same step claimed twice; and one
+step staying current for more than five minutes. The session records `session.stuck_detected` once,
+sets `stuck_since`, and changes nothing else. The island shows what the session said, in the user's
+words, with the offer.
+
+`POST /sessions/{id}/replan` queues an Operation of the new kind `replan`. The worker asks the
+`plan` role again, with a context carrying only the titles of settled steps, the recorded reason and
+any observed anomaly — no screen content, and nothing a client asserted. Every settled step is
+copied into the new version with its status, `verified_at` and a `previous_step_id` pointing at the
+row it came from; a `user_reported` result is copied with it, so a step reported done is not asked
+for again. Only the remainder is proposed. The result is a draft: the user reviews it on the
+existing plan screen and confirms it like any other plan, which is also what makes `confirm` and
+`start` work unchanged for a replanned session.
+
+Doc 05 gained the `awaiting_user_action → analyzing` row this needs, and `tests/test_engine.py` —
+the transition table written out independently of the engine — gained the same row. A failed replan
+goes to `blocked` with the step as its checkpoint, exactly as a failed instruction does, because
+doc 05 has no `analyzing → awaiting_user_action` row.
+
+Current verification: 252 backend tests pass and 2 skip on SQLite, 94 web unit tests pass, and 31
+browser scenarios pass in installed Chrome.
+
+## Watching, with a surface: 2026-09-13
+
+The consent routes from PR-14 now have somewhere to be used from. The island offers "Let Guider
+watch this window"; pressing it shows the [21](21-observation-consent-notice.md) notice in full,
+then the browser's own window picker, then the chosen window with the chance to paint over anything
+private. Only after that does `POST /sessions/{id}/observation` get called, with the exact notice
+version that was on screen. Watching is off until that last press, and one tap in the island stops
+it.
+
+`web/src/guide/watching.ts` is the only place a frame leaves the machine. It drives the tier 0/1
+gate that already existed, sends at most one frame at a time, and does nothing with a verdict
+except pass it on: `advance` was already committed by the server, `ask` raises one question with
+one tap, `wait` shows nothing. Answering that question is recorded as a claim and a self-report,
+because an observer that was not sure enough to advance has not produced evidence that the user's
+answer can borrow. Masking happens in `overlay/frameSource.ts` before encoding, at up to 1,280
+pixels a side; the counter shown is the server's `frames_observed` and never a number the browser
+kept.
+
+Running out of budget stops watching and says so, and the guide keeps working — that is the
+supported mode, not a failure. A rate limit or a moment with no step waiting is simply a tick that
+is not sent.
+
+The browser demo refuses to watch at all, with a message saying why: it has no backend and no
+vision provider, and a simulated verdict about a real screen would be an invented observation.
+
+Not proven here: the loop has never run against a live session. That needs Supabase sign-in and a
+running backend, which this environment does not have, so the tier-2 path is covered by unit tests
+against a fake API plus a backend test that the exact JPEG shape the browser encodes is accepted.
+With the fixture provider configured, every tick would return `unreadable` and advance nothing; the
+island says so once rather than leaving a counter ticking beside nothing happening.
+
+Current verification: 233 backend tests pass and 2 skip on SQLite, 87 web unit tests pass, and 28
+browser scenarios pass in installed Chrome.
+
 ## The island on a server session: 2026-09-13
 
 The Guide Island now runs a real session. Starting it calls `POST /sessions/{id}/start`, the step

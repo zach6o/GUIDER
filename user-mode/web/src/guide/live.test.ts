@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { islandStateFor, initialLiveState, liveReducer, type LiveState } from './live';
+import {
+  islandStateFor, initialLiveState, liveReducer, stuckMessage, type LiveState,
+} from './live';
 import type { CurrentInstruction, Instruction, Step } from '../types';
 
 const step = (overrides: Partial<Step> = {}): Step => ({
@@ -99,5 +101,29 @@ describe('interruptions', () => {
     expect(islandStateFor(failed)).toBe('error');
     // An error outranks a pause: a stopped guide must not read as paused.
     expect(islandStateFor(liveReducer(failed, { type: 'pause' }))).toBe('error');
+  });
+});
+
+describe('a guide that is going nowhere', () => {
+  const running = reduce({ type: 'start' }, { type: 'instruction', current: published() });
+
+  it('says so without changing what the guide is doing', () => {
+    const state = liveReducer(running, { type: 'stuck', reason: 'repeated_attempts' });
+    expect(state.stuck).toBe('repeated_attempts');
+    expect(state.phase).toBe('waiting');
+    expect(state.step?.id).toBe('step-1');
+    expect(islandStateFor(state)).toBe('watching');
+  });
+
+  it('forgets it once the guide is on a different step', () => {
+    const stuck = liveReducer(running, { type: 'stuck', reason: 'no_progress' });
+    const moved = liveReducer(stuck, { type: 'instruction', current: published({ ordinal: 2 }) });
+    expect(moved.stuck).toBe('');
+  });
+
+  it('puts the session reason into words without inventing a cause', () => {
+    expect(stuckMessage('anomaly:different_app')).toContain('no longer matches');
+    expect(stuckMessage('repeated_attempts')).toContain('not working out');
+    expect(stuckMessage('no_progress')).toContain('taking longer');
   });
 });

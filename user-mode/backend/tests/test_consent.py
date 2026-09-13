@@ -64,6 +64,9 @@ async def test_an_old_notice_must_be_read_again(harness):
     response = await consent(harness, session, version="observation-draft-0")
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "consent_version_mismatch"
+    # The refusal names the notice the client must show, so it can present the
+    # current wording rather than guess what changed.
+    assert response.json()["error"]["details"]["current_version"] == NOTICE_VERSION
 
     current = await session_state(harness, session["id"])
     assert current["observation_active"] is False

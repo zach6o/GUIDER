@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { CurrentInstruction, GuideApi } from './types';
+import type { CurrentInstruction, GuideApi, ObservationState } from './types';
 import { demoApi } from './demo';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -10,9 +10,10 @@ export const supabase = url && key ? createClient(url, key, {
 export const isDemo = !supabase;
 const base = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1/guide';
 
-/** Carries the status so a caller can tell "nothing here" from "went wrong". */
+/** Carries the status and code so a caller can tell "nothing here" from "went
+ *  wrong", and "the budget ran out" from "the session stopped". */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly code = '') { super(message); }
 }
 
 async function request<T>(path: string, init: RequestInit = {}, binary = false): Promise<T> {
@@ -27,6 +28,7 @@ async function request<T>(path: string, init: RequestInit = {}, binary = false):
     const error = await response.json().catch(() => null);
     throw new ApiError(
       error?.error?.message || 'Could not reach Guider. Please try again.', response.status,
+      error?.error?.code || '',
     );
   }
   return binary ? await response.blob() as T : (await response.json()).data as T;
@@ -89,6 +91,26 @@ const remote: GuideApi = {
   }),
   events: (id, after, waitMs, signal) => request(
     `/sessions/${id}/events?after=${after}&wait_ms=${waitMs}`, { signal },
+  ),
+  startWatching: (session, consentVersion) => post(`/sessions/${session.id}/observation`, {
+    expected_version: session.state_version, consent_version: consentVersion, accepted: true,
+  }),
+  // Stopping takes no version and no key: a control that stops something must
+  // not fail for being pressed at a bad moment, or twice.
+  stopWatching: id => request<ObservationState>(
+    `/sessions/${id}/observation`, { method: 'DELETE' },
+  ),
+  // One tick. The frame is held in memory on both ends and never stored.
+  observe: (session, imageBase64, admittedAt, signal) => request(
+    `/sessions/${session.id}/observe`,
+    {
+      method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_version: session.state_version, image_base64: imageBase64,
+        admitted_at: admittedAt,
+      }),
+    },
   ),
 };
 export const api: GuideApi = isDemo ? demoApi : remote;

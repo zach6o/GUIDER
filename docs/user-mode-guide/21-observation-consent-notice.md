@@ -45,6 +45,15 @@ the numbers and the controls may not be changed without a new version.
 >
 > Guider will show you how many pictures it has looked at, the whole time it is watching.
 
+## Where it is shown
+
+`web/src/guide/consent.ts` carries this wording and the version, and `overlay/WatchSetup.tsx`
+shows it before the window picker is ever opened. The version on screen is the one sent to
+`POST /sessions/{id}/observation`; when the server expects a newer one it refuses and names it in
+`details.current_version`, so the user reads the new notice rather than being carried forward on an
+old agreement. Approval under D06 therefore means changing both this document and that file, in the
+same change.
+
 ## Facts the notice must keep
 
 | Claim | Enforced by |
@@ -57,6 +66,7 @@ the numbers and the controls may not be changed without a new version.
 | Running out keeps guidance working | Budget exhaustion returns a message, not a failure |
 | One tap stops, including work in flight | `DELETE …/observation` increments `control_epoch` |
 | A count is always visible | `frames_observed` returned on the session and every tick |
+| The count shown is the server's | The island renders `frames_observed` from each tick, never a browser-side tally |
 
 Each row is a test, not a promise. A change to any number here is a change to the notice
 version and needs D06 again.

@@ -67,6 +67,16 @@ export interface GuideEventPage {
   }[];
   next_after: number;
 }
+export interface ObservationState {
+  active: boolean; frames_observed: number; observation_calls_remaining: number;
+  consent_version: string; session: Session;
+}
+export interface ObservationTick {
+  decision: 'advance' | 'ask' | 'wait';
+  confidence: number; ui_changed: boolean;
+  anomaly: 'none' | 'different_os' | 'different_app' | 'outdated_ui' | 'error_dialog' | 'unreadable';
+  note: string; frames_observed: number; observation_calls_remaining: number; session: Session;
+}
 export interface Receipt { id: string; status: string; online_purge_due_at: string }
 export interface TaskInput { goal: string; category: Category; application_key: string }
 export interface GuideApi {
@@ -90,4 +100,7 @@ export interface GuideApi {
   selfReport(session: Session, stepId: string, claimId: string, said: string): Promise<SelfReported>;
   skipStep(session: Session, stepId: string, reason: 'not_applicable' | 'already_done' | 'cannot_do'): Promise<Skipped>;
   events(id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<GuideEventPage>;
+  startWatching(session: Session, consentVersion: string): Promise<ObservationState>;
+  stopWatching(id: string): Promise<ObservationState>;
+  observe(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ObservationTick>;
 }

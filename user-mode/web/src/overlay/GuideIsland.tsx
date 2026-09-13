@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, Compass, Pause, Play, SkipForward, X } from 'lucide-react';
+import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, SkipForward, X } from 'lucide-react';
 import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
@@ -17,7 +17,17 @@ export interface GuideIslandProps {
   asking: boolean;
   correction: string;
   paused: boolean;
+  /** Set only while the observer raised the current question, so the copy can
+   *  say who is asking and on what basis. */
+  observerAsked?: boolean;
+  /** The server's own count of frames it has looked at, while watching is on. */
+  framesObserved?: number | null;
+  /** Anything the user should read about watching: it ran out, or the observer
+   *  cannot read frames at all. */
+  watchNotice?: string;
   mount: HTMLElement | null;
+  onStartWatching?: () => void;
+  onStopWatching?: () => void;
   onClaim: () => void;
   onAnswer: (happened: boolean) => void;
   onTogglePause: () => void;
@@ -27,6 +37,7 @@ export interface GuideIslandProps {
 
 export function GuideIsland(props: GuideIslandProps) {
   const { state, step, ordinal, total, asking, correction, paused, mount } = props;
+  const watching = typeof props.framesObserved === 'number';
   const instruction = props.instruction ?? null;
   const action = instruction?.what ?? step?.action ?? '';
   const where = instruction?.where ?? '';
@@ -89,12 +100,16 @@ export function GuideIsland(props: GuideIslandProps) {
         {where && <p className="island-where">{where}</p>}
         {asking
           ? <div className="island-ask">
-              <p><Check size={14} aria-hidden="true" /> Did this happen: {check}</p>
+              <p><Check size={14} aria-hidden="true" /> {props.observerAsked
+                ? `Guider thinks this is done. Did this happen: ${check}`
+                : `Did this happen: ${check}`}</p>
               <div className="island-answers">
                 <button className="primary" onClick={() => props.onAnswer(true)}>Yes, that happened</button>
                 <button className="text-button" onClick={() => props.onAnswer(false)}>Not yet</button>
               </div>
-              <small>You are telling Guider this yourself. Nothing has been checked on screen.</small>
+              <small>{props.observerAsked
+                ? 'Guider was not sure enough to move on by itself, so it asked. Your answer is recorded as your word, not as a check.'
+                : 'You are telling Guider this yourself. Nothing has been checked on screen.'}</small>
             </div>
           : <p className="island-expected"><Check size={13} aria-hidden="true" /> {check}</p>}
         {correction && <p className="island-correction" role="status">{correction}</p>}
@@ -111,6 +126,22 @@ export function GuideIsland(props: GuideIslandProps) {
           {why && <p>{why}</p>}
           {stuck && <p><strong>If that doesn&rsquo;t work:</strong> {stuck}</p>}
         </details>}
+        {props.watchNotice && <p className="island-watch-notice" role="status">{props.watchNotice}</p>}
+        {watching
+          ? <div className="island-watching">
+              <span className="island-frames" role="status">
+                <Eye size={13} aria-hidden="true" />
+                Watching this window. {props.framesObserved} picture
+                {props.framesObserved === 1 ? '' : 's'} looked at so far.
+              </span>
+              <button className="text-button" onClick={props.onStopWatching}>
+                <EyeOff size={14} /> Stop watching
+              </button>
+            </div>
+          : props.onStartWatching && step && <button
+              className="island-watch-start"
+              onClick={props.onStartWatching}
+            ><Eye size={14} /> Let Guider watch this window</button>}
         <div className="island-secondary">
           <button onClick={props.onTogglePause} aria-label={paused ? 'Resume the guide' : 'Pause the guide'}>
             {paused ? <Play size={14} /> : <Pause size={14} />}{paused ? 'Resume' : 'Pause'}

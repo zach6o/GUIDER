@@ -1,5 +1,39 @@
 # 19 · Implementation status and session handoff
 
+## Watching, with a surface: 2026-09-13
+
+The consent routes from PR-14 now have somewhere to be used from. The island offers "Let Guider
+watch this window"; pressing it shows the [21](21-observation-consent-notice.md) notice in full,
+then the browser's own window picker, then the chosen window with the chance to paint over anything
+private. Only after that does `POST /sessions/{id}/observation` get called, with the exact notice
+version that was on screen. Watching is off until that last press, and one tap in the island stops
+it.
+
+`web/src/guide/watching.ts` is the only place a frame leaves the machine. It drives the tier 0/1
+gate that already existed, sends at most one frame at a time, and does nothing with a verdict
+except pass it on: `advance` was already committed by the server, `ask` raises one question with
+one tap, `wait` shows nothing. Answering that question is recorded as a claim and a self-report,
+because an observer that was not sure enough to advance has not produced evidence that the user's
+answer can borrow. Masking happens in `overlay/frameSource.ts` before encoding, at up to 1,280
+pixels a side; the counter shown is the server's `frames_observed` and never a number the browser
+kept.
+
+Running out of budget stops watching and says so, and the guide keeps working — that is the
+supported mode, not a failure. A rate limit or a moment with no step waiting is simply a tick that
+is not sent.
+
+The browser demo refuses to watch at all, with a message saying why: it has no backend and no
+vision provider, and a simulated verdict about a real screen would be an invented observation.
+
+Not proven here: the loop has never run against a live session. That needs Supabase sign-in and a
+running backend, which this environment does not have, so the tier-2 path is covered by unit tests
+against a fake API plus a backend test that the exact JPEG shape the browser encodes is accepted.
+With the fixture provider configured, every tick would return `unreadable` and advance nothing; the
+island says so once rather than leaving a counter ticking beside nothing happening.
+
+Current verification: 233 backend tests pass and 2 skip on SQLite, 87 web unit tests pass, and 28
+browser scenarios pass in installed Chrome.
+
 ## The island on a server session: 2026-09-13
 
 The Guide Island now runs a real session. Starting it calls `POST /sessions/{id}/start`, the step

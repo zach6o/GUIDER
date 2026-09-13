@@ -10,6 +10,10 @@ import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, pipSupported, type FloatingWindow } from './overlay/pip';
 import type { IslandState } from './overlay/states';
 import { islandStateFor, useLiveGuide } from './guide/live';
+import { Watcher } from './guide/watching';
+import { createFrameSource, type MaskArea } from './overlay/frameSource';
+import { WatchSetup } from './overlay/WatchSetup';
+import { ScreenCapture } from './screenCapture';
 import type { Analysis, Category, Plan, Screenshot, Session, Task } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -35,6 +39,10 @@ export default function App() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [openStep, setOpenStep] = useState('');
   const [guiding, setGuiding] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
+  // Null means watching is off. A number is the server's own count of frames.
+  const [framesObserved, setFramesObserved] = useState<number | null>(null);
+  const [watchNotice, setWatchNotice] = useState('');
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState('');
@@ -46,6 +54,9 @@ export default function App() {
   const [code, setCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const watchVideo = useRef<HTMLVideoElement>(null);
+  const capture = useRef(new ScreenCapture());
+  const watcher = useRef<Watcher | null>(null);
   const goalInput = useRef<HTMLTextAreaElement>(null);
   const generation = useRef(0);
   const actionSequence = useRef(0);
@@ -162,11 +173,49 @@ export default function App() {
   // Guide Engine published an instruction for, and it advances only when a route
   // accepts a claim and a self-report.
   const live = useLiveGuide(api, session);
+  const guide = useRef(live);
+  useEffect(() => { guide.current = live; });
   const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block');
   const activeStep = live.state.step;
   const islandState: IslandState = islandStateFor(live.state);
 
+  /** Local teardown of watching: tracks stopped, loop halted, counter cleared. */
+  function releaseWatching() {
+    watcher.current?.halt();
+    watcher.current = null;
+    capture.current.stop();
+    if (watchVideo.current) watchVideo.current.srcObject = null;
+    setFramesObserved(null);
+  }
+  async function stopWatching(reason: string) {
+    const running = watcher.current;
+    releaseWatching();
+    setWatchNotice(reason);
+    try { await running?.stop(reason, false); } catch { /* off locally either way */ }
+  }
+  async function beginWatching(stream: MediaStream, masks: MaskArea[], consentVersion: string) {
+    const video = watchVideo.current;
+    if (!video) return;
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    const source = createFrameSource(video, () => masks);
+    const running = new Watcher(api, source, {
+      session: () => guide.current.session,
+      awaitingAction: () => guide.current.awaitingAction(),
+      onCounters: frames => setFramesObserved(frames),
+      // A middle-band verdict is worth one question and nothing more.
+      onTick: tick => { if (tick.decision === 'ask') guide.current.observerAsked(); },
+      onNotice: setWatchNotice,
+      onStopped: reason => { releaseWatching(); setWatchNotice(reason); },
+    });
+    watcher.current = running;
+    await running.start(consentVersion);
+    setWatchOpen(false);
+    setWatchNotice('');
+  }
+
   function stopGuiding() {
+    void stopWatching('Watching stopped with the guide.');
     live.close();
     setGuiding(false);
     setFloating((current: FloatingWindow | null) => { closeFloatingWindow(current); return null; });
@@ -310,13 +359,26 @@ export default function App() {
       asking={live.state.phase === 'asking'}
       correction={live.state.error || live.state.correction}
       paused={live.state.paused}
+      observerAsked={live.state.askedBy === 'observer'}
+      framesObserved={framesObserved}
+      watchNotice={watchNotice}
       mount={floating?.mount ?? null}
+      onStartWatching={() => { setWatchNotice(''); setWatchOpen(true); }}
+      onStopWatching={() => void stopWatching('You switched watching off.')}
       onClaim={() => void live.claim()}
       onAnswer={happened => void live.answer(happened)}
       onTogglePause={live.togglePause}
       onSkip={() => void live.skip()}
       onClose={stopGuiding}
     />}
+    {watchOpen && <WatchSetup
+      chooseWindow={() => capture.current.start(reason => void stopWatching(reason))}
+      onStart={beginWatching}
+      onCancel={() => { setWatchOpen(false); capture.current.stop(); }}
+    />}
+    {/* The watched window lives here for as long as watching is on: the setup
+        dialog closes, and its frames must keep arriving. It is never shown. */}
+    <video ref={watchVideo} className="sr-only" muted playsInline aria-hidden="true" tabIndex={-1} />
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />
     {authOpen && <div className="modal-backdrop"><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
       if (codeSent) { const result = await supabase!.auth.verifyOtp({ email, token: code, type: 'email' }); if (result.error) throw result.error; setAuthOpen(false); setCode(''); setCodeSent(false); }

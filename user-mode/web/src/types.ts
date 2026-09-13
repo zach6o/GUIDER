@@ -77,6 +77,15 @@ export interface ObservationTick {
   anomaly: 'none' | 'different_os' | 'different_app' | 'outdated_ui' | 'error_dialog' | 'unreadable';
   note: string; frames_observed: number; observation_calls_remaining: number; session: Session;
 }
+export type Outcome = 'achieved' | 'user_reported' | 'stopped' | 'failed' | 'expired';
+export interface Summary {
+  session_id: string; outcome: Outcome;
+  /** Steps something checked. */
+  verified_steps: string[];
+  /** Steps the user said were done, skipped, or never started. */
+  unverified_steps: string[];
+  corrections: string[]; text: string; next_action: string | null; created_at: string;
+}
 export type ImportSource = 'chatgpt' | 'claude' | 'gemini' | 'other';
 export interface ImportedConversation {
   id: string; source: ImportSource; redactions: number;
@@ -109,6 +118,8 @@ export interface GuideApi {
   selfReport(session: Session, stepId: string, claimId: string, said: string): Promise<SelfReported>;
   skipStep(session: Session, stepId: string, reason: 'not_applicable' | 'already_done' | 'cannot_do'): Promise<Skipped>;
   events(id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<GuideEventPage>;
+  complete(session: Session, outcome: 'achieved' | 'user_reported', said: string): Promise<{ session: Session; summary: Summary }>;
+  summary(id: string): Promise<Summary | null>;
   replan(session: Session, reason: 'stuck' | 'anomaly' | 'user'): Promise<{ operation_id: string; session: Session }>;
   startWatching(session: Session, consentVersion: string): Promise<ObservationState>;
   stopWatching(id: string): Promise<ObservationState>;

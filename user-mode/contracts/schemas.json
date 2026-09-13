@@ -258,6 +258,54 @@
         "title": "Claimed",
         "description": "A claim is the user's word. `verified` is always false here: only evidence\ncan verify a step, and that is a separate record (ADR-010)."
       },
+      "Completed": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/Summary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session",
+          "summary"
+        ],
+        "title": "Completed"
+      },
+      "CompletionRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "achieved",
+              "user_reported"
+            ],
+            "title": "Outcome"
+          },
+          "self_report": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Self Report",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "outcome"
+        ],
+        "title": "CompletionRequest",
+        "description": "How a task ends. `achieved` is a claim about evidence, so the engine\nchecks it; `user_reported` is the user's own account and is labelled as one\neverywhere it appears."
+      },
       "ConfirmRequest": {
         "properties": {
           "expected_version": {
@@ -493,6 +541,25 @@
           "request_id"
         ],
         "title": "Envelope[Claimed]"
+      },
+      "Envelope_Completed_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Completed"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Completed]"
       },
       "Envelope_ConfirmedPlan_": {
         "properties": {
@@ -778,6 +845,25 @@
           "request_id"
         ],
         "title": "Envelope[Skipped]"
+      },
+      "Envelope_Summary_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Summary"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Summary]"
       },
       "Envelope_Task_": {
         "properties": {
@@ -2301,6 +2387,83 @@
           "reason"
         ],
         "title": "StopRequest"
+      },
+      "Summary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "achieved",
+              "user_reported",
+              "stopped",
+              "failed",
+              "expired"
+            ],
+            "title": "Outcome"
+          },
+          "verified_steps": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Verified Steps"
+          },
+          "unverified_steps": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Unverified Steps"
+          },
+          "corrections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Corrections"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "outcome",
+          "verified_steps",
+          "unverified_steps",
+          "corrections",
+          "text",
+          "next_action",
+          "created_at"
+        ],
+        "title": "Summary",
+        "description": "What happened, with checked work and reported work kept apart."
       },
       "Task": {
         "properties": {

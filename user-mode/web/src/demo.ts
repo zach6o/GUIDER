@@ -1,6 +1,6 @@
 import type {
   Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, ImportAccepted, Instruction,
-  Operation, Plan, Screenshot, SelfReported, Session, Step, Task,
+  Operation, Outcome, Plan, Screenshot, SelfReported, Session, Step, Summary, Task,
 } from './types';
 
 const tasks = new Map<string, Task>();
@@ -14,6 +14,7 @@ const claims = new Map<string, { id: string; step_id: string; status: string; ve
 // on the server: enough to stop handing the step out, never enough to verify it.
 const selfReported = new Map<string, Set<string>>();
 const stuck = new Set<string>();
+const summaries = new Map<string, Summary>();
 const events = new Map<string, GuideEventPage['items']>();
 
 // Mirrors FIXTURE_PLAN in the backend fixture provider, so the offline demo shows
@@ -211,6 +212,65 @@ function currentStep(session: Session): { instruction: Instruction; step: Step }
   return step ? { instruction, step } : null;
 }
 
+/**
+ * The same summary the server builds, from the same records.
+ *
+ * Mirrors `app/guide/summary.py`: checked steps and reported steps are separate
+ * lists, and the prose says which is which. A demo that told the user "all done"
+ * would erase the distinction everything else here maintains.
+ */
+function writeSummary(session: Session, outcome: Outcome): Summary {
+  const existing = summaries.get(session.id);
+  if (existing) return existing;
+  const plan = [...plans.values()].find(
+    item => item.session_id === session.id && item.status === 'confirmed',
+  );
+  const steps = plan?.steps ?? [];
+  const reported = selfReported.get(session.id) ?? new Set<string>();
+  const verified = steps.filter(step => step.status === 'verified');
+  const told = steps.filter(step => step.status !== 'verified' && reported.has(step.id));
+  const skipped = steps.filter(step => step.status === 'skipped');
+  const blocked = steps.filter(step => step.policy_disposition === 'block');
+  const settled = new Set([...verified, ...told, ...skipped, ...blocked].map(step => step.id));
+  const outstanding = steps.filter(step => !settled.has(step.id));
+
+  const parts = [`${steps.length} step${steps.length === 1 ? '' : 's'} in this plan.`];
+  if (verified.length) {
+    parts.push(`${verified.length} ${verified.length === 1 ? 'was' : 'were'} checked on screen.`);
+  }
+  if (told.length) {
+    parts.push(`${told.length} you told Guider ${told.length === 1 ? 'was' : 'were'} done; nothing checked those.`);
+  }
+  if (skipped.length) {
+    parts.push(`${skipped.length} ${skipped.length === 1 ? 'was' : 'were'} skipped.`);
+  }
+  if (blocked.length) {
+    parts.push(`${blocked.length} need${blocked.length === 1 ? 's' : ''} separate review and Guider did not walk you through ${blocked.length === 1 ? 'it' : 'them'}.`);
+  }
+  if (outstanding.length) {
+    parts.push(`${outstanding.length} ${outstanding.length === 1 ? 'was' : 'were'} never started.`);
+  }
+  if (outcome === 'achieved') parts.push('Every required step was checked.');
+  if (outcome === 'user_reported') parts.push('This is your own account of the work, not a check of it.');
+  if (outcome === 'stopped') parts.push('You stopped this task.');
+
+  const summary: Summary = {
+    session_id: session.id, outcome,
+    verified_steps: verified.map(step => step.id),
+    unverified_steps: [...told, ...skipped, ...outstanding].map(step => step.id),
+    corrections: [
+      ...skipped.map(step => `Step ${step.ordinal} was skipped: ${step.title}`),
+      ...blocked.map(step => `Step ${step.ordinal} needs separate review: ${step.title}`),
+      ...outstanding.map(step => `Step ${step.ordinal} was never started: ${step.title}`),
+    ],
+    text: parts.join(' '),
+    next_action: blocked.length ? `Step ${blocked[0].ordinal} still needs separate review.` : null,
+    created_at: timestamp(),
+  };
+  summaries.set(session.id, summary);
+  return summary;
+}
+
 function instructOperation(): Operation {
   const operation: Operation = {
     id: uid(), kind: 'instruct', status: 'succeeded', result: null, error: null,
@@ -398,7 +458,47 @@ export const demoApi: GuideApi = {
   async stop(id) {
     const session = requireItem(sessions, id);
     session.state = 'completed'; session.outcome = 'stopped'; session.state_version++;
+    // A stopped task still has something worth reading in history.
+    writeSummary(session, 'stopped');
     return clone(session);
+  },
+  async complete(session, outcome, said) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    if (current.state === 'completed') throw new Error('This task has already finished.');
+    const plan = [...plans.values()].find(
+      item => item.session_id === current.id && item.status === 'confirmed',
+    );
+    if (!plan) throw new Error('There is no confirmed plan to finish.');
+    const reported = selfReported.get(current.id) ?? new Set<string>();
+    const required = plan.steps.filter(step => step.required);
+    // `achieved` is a claim about evidence, so it is checked rather than taken.
+    if (outcome === 'achieved' && !required.every(step => step.status === 'verified')) {
+      throw new Error(
+        'Some steps have not been checked. Finish as your own account instead, '
+        + 'or check the rest first.',
+      );
+    }
+    if (outcome === 'user_reported' && !required.every(step => step.policy_disposition !== 'block'
+      && (step.status === 'verified' || step.status === 'skipped' || reported.has(step.id)))) {
+      throw new Error(
+        'Some steps are still open, or need separate review. Skip what you are not doing first.',
+      );
+    }
+    current.outcome = outcome;
+    move(current, 'completed', outcome);
+    const summary = writeSummary(current, outcome);
+    if (said.trim()) summary.corrections = [...summary.corrections, `You said: ${said.trim()}`];
+    const task = tasks.get(current.task_id);
+    if (task) task.status = 'completed';
+    return clone({ session: current, summary });
+  },
+  async summary(id) {
+    const session = requireItem(sessions, id);
+    if (session.state !== 'completed') return null;
+    return clone(summaries.get(id) ?? null);
   },
   async start(session) {
     const current = requireItem(sessions, session.id);

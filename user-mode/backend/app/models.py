@@ -292,6 +292,40 @@ class VerificationResult(Owned, Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
+OUTCOMES = ("achieved", "user_reported", "stopped", "failed", "expired")
+
+
+class SessionSummary(Owned, Base):
+    """What happened, written down once when a session ends.
+
+    The distinction the whole record exists for: `verified_steps` are steps
+    something checked, and `unverified_steps` are steps the user said were done.
+    A summary that blurred the two would undo what ADR-010 and the verification
+    model are for, so they are separate columns rather than one list with a flag.
+    """
+
+    __tablename__ = "session_summaries"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        # One session, one summary: it describes an ending, and there is one.
+        UniqueConstraint("owner_id", "session_id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"outcome IN {OUTCOMES}", name="session_summaries_outcome"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    outcome: Mapped[str]
+    verified_steps: Mapped[list] = mapped_column(JSON, default=list)
+    unverified_steps: Mapped[list] = mapped_column(JSON, default=list)
+    corrections: Mapped[list] = mapped_column(JSON, default=list)
+    text: Mapped[str] = mapped_column(String(4000), default="")
+    next_action: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(default="ready")
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
 IMPORT_SOURCES = ("chatgpt", "claude", "gemini", "other")
 
 

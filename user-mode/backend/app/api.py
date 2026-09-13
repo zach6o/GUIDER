@@ -34,6 +34,7 @@ from app.guide.steps import (
     retire_instructions,
     skip_step,
 )
+from app.guide.summary import require_ending, write_summary
 from app.imports.redact import MAX_TRANSCRIPT, redact
 from app.media import MAX_BYTES, normalize, prepare_frame
 from app.providers.base import ObserveContext
@@ -691,6 +692,66 @@ async def stop_observation(session_id: UUID, request: Request, db: Db, owner: Ow
     return envelope(request, observation_state(request, session))
 
 
+@router.post("/sessions/{session_id}/completion", response_model=s.Envelope[s.Completed])
+async def complete(
+    session_id: UUID,
+    body: s.CompletionRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """End the task, and say honestly how it ended.
+
+    `achieved` requires evidence for every required step; without it the route
+    refuses and offers the outcome that is true instead. A session that rests on
+    the user's own account ends `user_reported`, and its summary says so
+    (docs 02 F09, 05).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state in TERMINAL:
+        raise GuideError(409, "invalid_transition", "This task has already finished.")
+    await require_ending(db, session, body.outcome)
+
+    session.outcome = body.outcome
+    session.ended_at = m.now()
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "completed", body.outcome, request.state.request_id)
+    summary = await write_summary(
+        db, session, body.outcome, request.state.request_id, body.self_report
+    )
+    task = await db.get(m.GuideTask, session.task_id)
+    if task is not None:
+        task.status = "completed"
+        task.updated_at = m.now()
+    result = s.Completed(
+        session=s.Session.model_validate(session), summary=s.Summary.model_validate(summary)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.get("/sessions/{session_id}/summary", response_model=s.Envelope[s.Summary])
+async def summary_of(session_id: UUID, request: Request, db: Db, owner: Owner):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    if session.state not in TERMINAL:
+        raise GuideError(409, "session_not_terminal", "This task has not finished yet.")
+    summary = await db.scalar(
+        select(m.SessionSummary).where(
+            m.SessionSummary.owner_id == owner.id,
+            m.SessionSummary.session_id == session.id,
+        )
+    )
+    if summary is None:
+        raise not_found()
+    return envelope(request, s.Summary.model_validate(summary))
+
+
 @router.post("/sessions/{session_id}/replan", status_code=202, response_model=s.Envelope[s.Pending])
 async def replan(
     session_id: UUID,
@@ -1078,6 +1139,8 @@ async def restrict(
             session.ended_at = m.now()
             await transition(db, session, "stopping", body.reason, request.state.request_id)
             await transition(db, session, "completed", body.reason, request.state.request_id)
+            # A stopped task still has a history entry worth reading (doc 02 F12).
+            await write_summary(db, session, "stopped", request.state.request_id)
         else:
             await transition(db, session, "paused", body.reason, request.state.request_id)
     result = s.Session.model_validate(session)

@@ -32,6 +32,9 @@ export interface GuideIslandProps {
   onStartWatching?: () => void;
   onStopWatching?: () => void;
   onReplan?: () => void;
+  /** Offered only when the plan has run out: ending a task is the user's call,
+   *  and what it is called depends on what was actually checked. */
+  onFinish?: () => void;
   onClaim: () => void;
   onAnswer: (happened: boolean) => void;
   onTogglePause: () => void;
@@ -117,9 +120,15 @@ export function GuideIsland(props: GuideIslandProps) {
             </div>
           : <p className="island-expected"><Check size={13} aria-hidden="true" /> {check}</p>}
         {correction && <p className="island-correction" role="status">{correction}</p>}
-      </> : <p className="island-action">{state === 'finished'
-        ? 'Every step is finished. Nothing was verified on screen.'
-        : 'Getting your next step ready…'}</p>}
+      </> : <>
+        <p className="island-action">{state === 'finished'
+          ? 'Every step is behind you. Guider checked only what it could see.'
+          : 'Getting your next step ready…'}</p>
+        {state === 'finished' && props.onFinish && <button
+          className="primary island-finish"
+          onClick={props.onFinish}
+        ><Check size={15} /> Finish this task</button>}
+      </>}
 
       <div className="island-controls">
         {step && !asking && <button className="primary" onClick={props.onClaim}>

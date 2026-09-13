@@ -1,5 +1,33 @@
 # 19 · Implementation status and session handoff
 
+## Session summary and completed-guide history: 2026-09-13
+
+A task can now end, and the record says honestly how it ended.
+
+`POST /sessions/{id}/completion` takes `achieved` or `user_reported`. `achieved` is a claim about
+evidence, so the engine checks it: every required step must be `verified`, and a session resting on
+the user's own word is refused with `verification_required` and offered the outcome that is true
+instead. `user_reported` needs every required step dealt with — verified, self-reported or
+explicitly skipped — and none of them blocked, because a step Guider refused to instruct is not
+something a user can report their way past. `GET /sessions/{id}/summary` reads it back; stopping a
+task writes one too, so history is never blank (doc 02 F12).
+
+`app/guide/summary.py` builds the summary deterministically from the records rather than asking a
+model, and keeps the distinction in its shape: `verified_steps` and `unverified_steps` are separate
+columns, and the prose says which is which — "1 was checked on screen. 2 you told Guider were done;
+nothing checked those." Skipped, blocked and never-started steps are named in `corrections` rather
+than folded into a count.
+
+The island offers "Finish this task" only once the plan has run out, and the web summary screen
+shows each step with its own label: checked on screen, you reported this, needs separate review, or
+not started. Finished tasks open their summary from history. The browser demo builds the same
+summary from the same records, and refuses `achieved` the same way.
+
+Phase 4 of [20](20-guide-engine-migration-plan.md) is complete.
+
+Current verification: 308 backend tests pass and 2 skip on SQLite, 105 web unit tests pass, and 41
+browser scenarios pass in installed Chrome.
+
 ## Importing a conversation: 2026-09-13
 
 `POST /imports/conversations` takes a pasted transcript and produces a draft plan. Paste is the

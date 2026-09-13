@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { CurrentInstruction, GuideApi, ObservationState } from './types';
+import type { CurrentInstruction, GuideApi, ObservationState, Summary } from './types';
 import { demoApi } from './demo';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -93,6 +93,18 @@ const remote: GuideApi = {
   events: (id, after, waitMs, signal) => request(
     `/sessions/${id}/events?after=${after}&wait_ms=${waitMs}`, { signal },
   ),
+  complete: (session, outcome, said) => post(`/sessions/${session.id}/completion`, {
+    expected_version: session.state_version, outcome, self_report: said,
+  }),
+  // A summary exists only once a task has ended; before that, 409 is the answer.
+  summary: async id => {
+    try {
+      return await request<Summary>(`/sessions/${id}/summary`);
+    } catch (error) {
+      if (error instanceof ApiError && [404, 409].includes(error.status)) return null;
+      throw error;
+    }
+  },
   replan: (session, reason) => post(`/sessions/${session.id}/replan`, {
     expected_version: session.state_version, reason,
   }),

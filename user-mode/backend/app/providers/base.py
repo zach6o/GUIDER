@@ -135,6 +135,31 @@ class ObserveResult(Schema):
     note: str = Field(max_length=200)
 
 
+class ImportContext(Schema):
+    """A transcript the user pasted, and where they say it came from.
+
+    Untrusted in full. An importer reads it the way it would read text off a
+    screenshot: as evidence about what the user wants, never as instructions
+    (ADR-018, SEC-09).
+    """
+
+    transcript: str = Field(min_length=1, max_length=32768)
+    source: Literal["chatgpt", "claude", "gemini", "other"] = "other"
+
+
+class ImportedTask(Schema):
+    """What an importer may propose: a goal and a candidate roadmap.
+
+    There is deliberately nothing here that could start anything. No confirmed
+    plan, no session, no provider or policy field — an import ends in a draft the
+    user confirms, like every other plan (ADR-010, ADR-018).
+    """
+
+    goal: str = Field(min_length=1, max_length=4000)
+    application_key: str = Field(max_length=80, default="unknown")
+    plan: ProposedPlan
+
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """What an adapter can do. The registry selects on this, never on `id`."""
@@ -191,6 +216,14 @@ class VisionObserver(Protocol):
     write an instruction, or see anything but the current frame."""
 
     async def observe(self, ctx: ObserveContext, image: bytes) -> ObserveResult: ...
+
+
+class ConversationImporter(Protocol):
+    """Role `import`: a pasted transcript to a proposed goal and roadmap. Cannot
+    confirm a plan, start a session or take anything in the text as an
+    instruction (ADR-018)."""
+
+    async def import_conversation(self, ctx: ImportContext) -> ImportedTask: ...
 
 
 class LiveGuidanceProvider(Protocol):

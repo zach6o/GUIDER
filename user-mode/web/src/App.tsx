@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
-  Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
+  ClipboardPaste, Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
   ListChecks, LogOut, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal, Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
@@ -14,7 +14,9 @@ import { Watcher } from './guide/watching';
 import { createFrameSource, type MaskArea } from './overlay/frameSource';
 import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
-import type { Analysis, Category, Plan, Screenshot, Session, Task } from './types';
+import type {
+  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, Session, Task,
+} from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
   { id: 'setup', label: 'Set something up', icon: Zap }, { id: 'run', label: 'Run a project', icon: Play },
@@ -22,6 +24,9 @@ const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
   { id: 'test', label: 'Test my work', icon: CheckCircle2 }, { id: 'git_github', label: 'Git & GitHub', icon: GitBranch },
 ];
 type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live';
+const SOURCE_LABELS: Record<ImportSource, string> = {
+  chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', other: 'another assistant',
+};
 type HistoryItem = { session: Session; task_title: string };
 
 export default function App() {
@@ -43,6 +48,12 @@ export default function App() {
   // Null means watching is off. A number is the server's own count of frames.
   const [framesObserved, setFramesObserved] = useState<number | null>(null);
   const [watchNotice, setWatchNotice] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [importSource, setImportSource] = useState<ImportSource>('chatgpt');
+  // Set only for a plan that came from a pasted conversation, so the screen can
+  // say where it came from and what the guard did to it.
+  const [provenance, setProvenance] = useState<ImportedConversation | null>(null);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState('');
@@ -101,6 +112,47 @@ export default function App() {
       setTask(created.task); setSession(created.session); setPage('task'); setAnalysis(null); setScreenshot(null);
     });
   }
+  /**
+   * Continue from a conversation the user already had. The text is data: it can
+   * only ever produce a draft plan, which is reviewed like any other.
+   */
+  async function importConversation() {
+    if (transcript.trim().length < 20) {
+      setError('Paste the part of the conversation with the steps in it.');
+      return;
+    }
+    if (!signedIn) { setAuthOpen(true); return; }
+    const token = ++generation.current;
+    await work('Reading the conversation…', async () => {
+      const accepted = await api.importConversation(transcript.trim(), importSource);
+      if (generation.current !== token) return;
+      setTask(accepted.task); setSession(accepted.session);
+      setPasteOpen(false); setTranscript('');
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (!isDemo) await new Promise(resolve => setTimeout(resolve, 2000));
+        if (generation.current !== token) return;
+        const operation = await api.operation(accepted.operation_id);
+        if (generation.current !== token) return;
+        if (operation.status === 'succeeded' && operation.result_id) {
+          setPlan(await api.plan(operation.result_id));
+          setTask(await api.task(accepted.task.id));
+          setSession(await api.session(accepted.session.id));
+          setProvenance(accepted.imported);
+          setOpenStep(''); setPage('plan');
+          setNotice(accepted.imported.redactions > 0
+            ? `${accepted.imported.redactions} thing that looked like a secret was removed before anything was stored.`
+            : 'Read from your conversation. Nothing has started — review the steps first.');
+          return;
+        }
+        if (['failed', 'canceled'].includes(operation.status)) {
+          throw new Error(operation.error?.message
+            || 'Guider could not find a goal and steps in that text.');
+        }
+      }
+      throw new Error('Reading the conversation is taking too long. Try again in a moment.');
+    });
+  }
+
   async function example() {
     await work('Preparing the example…', async () => {
       const blob = await fetch('/fixtures/python-error.png').then(response => {
@@ -148,6 +200,7 @@ export default function App() {
     const token = ++generation.current;
     await work('Working out the steps…', async () => {
       const current = await api.session(session.id);
+      setProvenance(null);
       const pending = await api.requestPlan(task, current);
       if (generation.current !== token) return;
       setSession(pending.session);
@@ -340,6 +393,24 @@ export default function App() {
             <div className="composer-bottom"><button className={draft ? 'attach-button attached' : 'attach-button'} onClick={() => input.current?.click()} disabled={!!busy}><ImagePlus size={18} />{draft ? 'Screenshot attached' : 'Add a screenshot'}{draft && <Check size={14} />}</button><button className="primary" disabled={!!busy} onClick={() => void createTask()}>{busy ? <LoaderCircle className="spin" size={17} /> : <>Let’s figure it out <ArrowRight size={18} /></>}</button></div>
           </section>
           <div className="composer-caption"><ShieldCheck size={14} /> You choose what to share. Guider never controls your computer.</div>
+          <section className="import-card" aria-label="Continue from a conversation">
+            {!pasteOpen
+              ? <div className="import-intro"><span className="brand-mark"><ClipboardPaste size={22} /></span>
+                  <div><h2>Already asked another assistant?</h2><p>Paste the conversation and Guider will turn its steps into a plan you can follow here.</p></div>
+                  <button className="text-button" disabled={!!busy} onClick={() => { setPasteOpen(true); setError(''); }}>Paste a conversation <ArrowRight size={16} /></button>
+                </div>
+              : <>
+                  <div className="section-heading compact"><h2>Paste the conversation.</h2><span>Up to 32 KB of text.</span></div>
+                  <label className="app-select">It came from <select value={importSource} onChange={event => setImportSource(event.target.value as ImportSource)} disabled={!!busy}>
+                    <option value="chatgpt">ChatGPT</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="other">Somewhere else</option>
+                  </select></label>
+                  <label className="sr-only" htmlFor="transcript">Conversation text</label>
+                  <textarea id="transcript" value={transcript} maxLength={32768} placeholder="Paste the part with the steps in it…" onChange={event => setTranscript(event.target.value)} disabled={!!busy} />
+                  <p className="privacy-note"><ShieldCheck size={14} /> Pasted text is treated as information, never as instructions. Anything that looks like a key or password is removed before it is stored, and nothing starts until you confirm the plan.</p>
+                  <div className="plan-buttons"><button className="text-button" disabled={!!busy} onClick={() => { setPasteOpen(false); setTranscript(''); }}>Cancel</button>
+                    <button className="primary" disabled={!!busy} onClick={() => void importConversation()}>{busy ? <LoaderCircle className="spin" size={17} /> : <>Read the steps <ArrowRight size={17} /></>}</button></div>
+                </>}
+          </section>
           <section className="category-section"><div className="section-heading compact"><h2>What kind of help?</h2><span>A starting point is enough.</span></div><div className="categories">{categories.map(item => <button key={item.id} className={category === item.id ? 'category active' : 'category'} aria-pressed={category === item.id} onClick={() => setCategory(item.id)}><item.icon size={18} />{item.label}</button>)}</div>
             <label className="app-select">Working in <select value={application} onChange={event => setApplication(event.target.value)}><option value="unknown">Not sure yet</option><option value="vscode">VS Code</option><option value="powershell">PowerShell / Terminal</option><option value="chrome">Chrome</option><option value="edge">Microsoft Edge</option><option value="github">GitHub</option><option value="docker_desktop">Docker Desktop</option></select></label></section>
           <section className="example-card"><div className="example-copy"><span className="eyebrow">NOT SURE WHERE TO START?</span><h2>Try a little “aha” moment.</h2><p>See how a Python error becomes something you understand.</p><button className="text-button" onClick={() => void example()} disabled={!!busy}>Explore an example <ArrowRight size={17} /></button></div><div className="mini-terminal" aria-hidden="true"><div className="terminal-top"><i /><i /><i /><span>python app.py</span></div><code>&gt; import requests<br /><span>ModuleNotFoundError</span></code><div className="terminal-hint"><span><Compass size={16} /></span> Let’s make sense of this.</div></div></section>
@@ -358,6 +429,10 @@ export default function App() {
         {page === 'plan' && task && session && plan && <div className="plan-content">
           <button className="text-button back-link" disabled={!!busy} onClick={() => navigate('task')}><ArrowLeft size={16} /> Back to the task</button>
           <div className="task-heading"><div><span className="eyebrow">STEP-BY-STEP · VERSION {plan.version}</span><h1>{task.title}</h1></div><span className="status-pill">{plan.status === 'confirmed' ? 'Confirmed' : 'Awaiting your review'}</span></div>
+          {provenance && <section className="provenance" role="note"><ClipboardPaste size={16} />
+            <div><strong>From a conversation you pasted.</strong>
+              <small>Read word for word from {SOURCE_LABELS[provenance.source]}, not written by Guider, and not checked against your screen.{provenance.steps_blocked > 0 && ` ${provenance.steps_blocked} step needs review before Guider will walk you through it.`}</small></div>
+          </section>}
           <p className="muted plan-intro">Guider suggests {plan.steps.length} steps. Read them over — nothing starts until you say so, and you perform every action yourself.</p>
           {plan.assumptions.length > 0 && <section className="assumptions" aria-label="Assumptions"><span className="eyebrow">WHAT THIS ASSUMES</span><ul>{plan.assumptions.map((item, index) => <li key={index}><CircleHelp size={15} />{item}</li>)}</ul></section>}
           <ol className="plan-steps">{plan.steps.map(step => <li key={step.id} className={step.policy_disposition === 'block' ? 'plan-step blocked' : 'plan-step'}>

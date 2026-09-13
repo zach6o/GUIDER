@@ -589,6 +589,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_ImportAccepted_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ImportAccepted"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ImportAccepted]"
+      },
       "Envelope_ObservationState_": {
         "properties": {
           "data": {
@@ -996,6 +1015,119 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImportAccepted": {
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Operation Id"
+          },
+          "imported": {
+            "$ref": "#/components/schemas/ImportedConversation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task",
+          "session",
+          "operation_id",
+          "imported"
+        ],
+        "title": "ImportAccepted",
+        "description": "What an import creates: a task, a session, and work to produce a draft.\n\nNothing is confirmed and nothing has started. The plan that arrives is\nreviewed and confirmed exactly like a generated one."
+      },
+      "ImportRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 20,
+            "title": "Text"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source",
+            "default": "other"
+          },
+          "category": {
+            "$ref": "#/components/schemas/Category",
+            "default": "setup"
+          },
+          "application_key": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Application Key",
+            "default": "unknown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ImportRequest",
+        "description": "A conversation the user already had, pasted in. Paste is the only\ntransport: no extension, no connector, no third-party credential (ADR-018)."
+      },
+      "ImportedConversation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source"
+          },
+          "redactions": {
+            "type": "integer",
+            "title": "Redactions"
+          },
+          "steps_extracted": {
+            "type": "integer",
+            "title": "Steps Extracted"
+          },
+          "steps_blocked": {
+            "type": "integer",
+            "title": "Steps Blocked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "redactions",
+          "steps_extracted",
+          "steps_blocked",
+          "created_at"
+        ],
+        "title": "ImportedConversation"
       },
       "Instruction": {
         "properties": {

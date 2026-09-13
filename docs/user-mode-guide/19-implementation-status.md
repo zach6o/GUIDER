@@ -1,5 +1,39 @@
 # 19 · Implementation status and session handoff
 
+## Importing a conversation: 2026-09-13
+
+`POST /imports/conversations` takes a pasted transcript and produces a draft plan. Paste is the
+only transport, as ADR-018 requires: no extension, no connector, no third-party credential. The
+route redacts recognized secrets before the row is written, stores the transcript once for
+provenance under retention class H, creates a task and session, and queues an Operation of the new
+kind `import`. The worker asks the `import` role, vets the result, and publishes a draft the user
+confirms exactly like a generated plan. An import confirms nothing, starts nothing, switches nothing
+on.
+
+Pasted text is data. `app/imports/text.py` holds the injection check for this surface: a line that
+addresses Guider — "ignore previous instructions", a fake `SYSTEM:` turn, "you are now" — is skipped
+when the goal is read and dropped when it appears as a step, because there is nothing in such a step
+for a user to review. A *restricted action* is treated differently on purpose: it is kept and marked
+`block` by `step_policy`, so the user sees that the conversation suggested `sudo rm -rf` and that
+Guider will not walk them through it.
+
+The fixture importer is a parser, not a reader: numbered and bulleted lines become steps with the
+same words, the user's own opening line becomes the goal, and the plan says so in its assumptions.
+The Anthropic adapter serves the same role for a configured provider, with the transcript marked as
+untrusted in its brief.
+
+`app/imports/redact.py` drops provider keys, bearer tokens, labelled credentials, private key blocks
+and connection strings carrying inline passwords, and the count is shown to the user. It is a net,
+not a guarantee — the 32 KiB cap and the 30-day retention are what limit the rest.
+
+The provider gate from PR-16 was narrowed while doing this: it now forbids adapter classes, adapter
+modules and model names outside `app/providers/` — dispatch — and allows a vendor name only in
+`app/imports/`, or on a line declaring the import's `source`. That is provenance the user chose,
+not a branch on who answered.
+
+Current verification: 291 backend tests pass and 2 skip on SQLite, 99 web unit tests pass, and 37
+browser scenarios pass in installed Chrome.
+
 ## A second provider, and the gate that proves the abstraction: 2026-09-13
 
 `app/providers/anthropic.py` serves the `guide`, `observe`, `plan` and `instruct` roles against the

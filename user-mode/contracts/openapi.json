@@ -160,6 +160,162 @@
         }
       }
     },
+    "/api/v1/guide/imports/conversations": {
+      "post": {
+        "summary": "Import Conversation",
+        "description": "Continue from a conversation the user already had somewhere else.\n\nThe text is untrusted data in the SEC-09 sense: it is redacted, stored once\nfor provenance, and read for a goal and candidate steps. What comes back is a\ndraft plan the user confirms, like any other. An import cannot confirm a plan,\nstart a session, switch watching on or change policy (ADR-018).",
+        "operationId": "import_conversation_api_v1_guide_imports_conversations_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ImportAccepted_"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/guide/tasks/{task_id}": {
       "get": {
         "summary": "Get Task",
@@ -4756,6 +4912,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_ImportAccepted_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ImportAccepted"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ImportAccepted]"
+      },
       "Envelope_ObservationState_": {
         "properties": {
           "data": {
@@ -5163,6 +5338,119 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImportAccepted": {
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Operation Id"
+          },
+          "imported": {
+            "$ref": "#/components/schemas/ImportedConversation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task",
+          "session",
+          "operation_id",
+          "imported"
+        ],
+        "title": "ImportAccepted",
+        "description": "What an import creates: a task, a session, and work to produce a draft.\n\nNothing is confirmed and nothing has started. The plan that arrives is\nreviewed and confirmed exactly like a generated one."
+      },
+      "ImportRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 20,
+            "title": "Text"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source",
+            "default": "other"
+          },
+          "category": {
+            "$ref": "#/components/schemas/Category",
+            "default": "setup"
+          },
+          "application_key": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Application Key",
+            "default": "unknown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ImportRequest",
+        "description": "A conversation the user already had, pasted in. Paste is the only\ntransport: no extension, no connector, no third-party credential (ADR-018)."
+      },
+      "ImportedConversation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chatgpt",
+              "claude",
+              "gemini",
+              "other"
+            ],
+            "title": "Source"
+          },
+          "redactions": {
+            "type": "integer",
+            "title": "Redactions"
+          },
+          "steps_extracted": {
+            "type": "integer",
+            "title": "Steps Extracted"
+          },
+          "steps_blocked": {
+            "type": "integer",
+            "title": "Steps Blocked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "redactions",
+          "steps_extracted",
+          "steps_blocked",
+          "created_at"
+        ],
+        "title": "ImportedConversation"
       },
       "Instruction": {
         "properties": {

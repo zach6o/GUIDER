@@ -13,6 +13,8 @@ from PIL import Image, ImageDraw
 
 from app.media import normalize
 from app.providers.base import (
+    ImportContext,
+    ImportedTask,
     InstructionContext,
     ObserveContext,
     ObserveResult,
@@ -139,6 +141,17 @@ class FixtureProvider:
                 for step in FIXTURE_REPLAN
             ],
         )
+
+    async def import_conversation(self, ctx: ImportContext) -> ImportedTask:
+        """Reads the structure already in the text and invents nothing.
+
+        A fixture cannot understand a conversation, so it does not pretend to:
+        numbered lines become steps with the same words, and the opening line
+        becomes the goal. The import is labelled as read, not interpreted.
+        """
+        from app.imports.text import extract_locally
+
+        return extract_locally(ctx)
 
     async def instruct(self, ctx: InstructionContext) -> ProposedInstruction:
         """Restates the confirmed step as one action. A real writer would use the

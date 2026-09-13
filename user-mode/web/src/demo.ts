@@ -1,6 +1,6 @@
 import type {
-  Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, Instruction, Operation, Plan,
-  Screenshot, SelfReported, Session, Step, Task,
+  Analysis, Claimed, CurrentInstruction, GuideApi, GuideEventPage, ImportAccepted, Instruction,
+  Operation, Plan, Screenshot, SelfReported, Session, Step, Task,
 } from './types';
 
 const tasks = new Map<string, Task>();
@@ -37,6 +37,66 @@ const demoSteps = [
     fallback: 'If the prompt does not return, press Ctrl+C and try again.',
     explanation: 'Silence means the package is available to this interpreter. Repeating the error confirms the package is genuinely missing here.' },
 ];
+/**
+ * The same reading and the same refusals the server performs, in the browser.
+ *
+ * Mirrors `app/imports/text.py` and `app/imports/redact.py`: structure only, no
+ * interpretation, recognized secrets dropped before anything is stored, and text
+ * that addresses Guider removed rather than carried into a step. A demo that
+ * accepted an injected instruction the server refuses would teach the wrong
+ * thing in the only place most people look.
+ */
+const INJECTION = new RegExp([
+  'ignore\\s+(all\\s+|any\\s+|the\\s+)?(previous|prior|earlier|above)\\s+(instructions?|messages?|rules?|prompts?)',
+  'disregard\\s+(all\\s+|any\\s+|the\\s+)?(previous|prior|earlier|above)',
+  'you\\s+are\\s+now\\s+',
+  'from\\s+now\\s+on[,:]?\\s+you',
+  '^\\s*(system|developer|assistant)\\s*:',
+  'act\\s+as\\s+(the\\s+)?(system|developer|guider)',
+  'new\\s+instructions?\\s*:',
+  'override\\s+(your|the)\\s+(policy|rules|instructions)',
+].join('|'), 'i');
+const SECRETS: RegExp[] = [
+  /\bsk-ant-[A-Za-z0-9_-]{8,}/gi, /\bsk-[A-Za-z0-9_-]{16,}/gi,
+  /\b(?:AKIA|ASIA)[0-9A-Z]{12,}/g, /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bBearer\s+[A-Za-z0-9._-]{12,}/gi,
+  /\b(api[_\- ]?key|secret|token|password|passwd|pwd)\b\s*[:=]\s*\S+/gi,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@\S+/gi,
+];
+const STEP_MARKER = /^\s*(?:step\s*)?\d{1,2}[.)]\s+(\S.*)$/i;
+const BULLET = /^\s*[-*•]\s+(\S.*)$/;
+const SPEAKER = /^\s*(you|user|me|human|assistant|chatgpt|claude|gemini)\s*:\s*/i;
+// Mirrors RESTRICTED in app/guide/guard.py: a step proposing one of these is
+// kept so the user sees it, and marked blocked so it can never be instructed.
+const RESTRICTED = /\b(install|uninstall|delete|remove|send|publish|push|commit|reset|format|sudo|chmod|chown|password|purchase|payment|transfer|administrator)\b|\b(rm|del|rmdir|Remove-Item|Set-ExecutionPolicy)\s|\bapi\s*key\b/i;
+
+function redactTranscript(text: string): { text: string; redactions: number } {
+  let redactions = 0;
+  let clean = text;
+  for (const pattern of SECRETS) {
+    clean = clean.replace(pattern, match => {
+      redactions++;
+      const labelled = /^([A-Za-z_\- ]+)\s*[:=]/.exec(match);
+      return labelled ? `${labelled[1]}: [removed]` : '[removed]';
+    });
+  }
+  return { text: clean, redactions };
+}
+
+function readTranscript(text: string) {
+  const lines = text.split('\n');
+  const steps = lines
+    .map(line => (STEP_MARKER.exec(line) ?? BULLET.exec(line))?.[1] ?? '')
+    .map(action => action.replace(/\s+/g, ' ').trim())
+    .filter(action => action.length >= 8 && !INJECTION.test(action))
+    .slice(0, 12);
+  const goal = lines
+    .map(line => line.replace(SPEAKER, '').trim())
+    .find(line => line.length >= 12 && !STEP_MARKER.test(line) && !BULLET.test(line)
+      && !INJECTION.test(line)) ?? '';
+  return { goal, steps };
+}
+
 const uid = () => crypto.randomUUID();
 const timestamp = () => new Date().toISOString();
 const expiry = () => new Date(Date.now() + 86_400_000).toISOString();
@@ -169,6 +229,69 @@ export const demoApi: GuideApi = {
     task.current_session_id = session.id;
     tasks.set(task.id, task); sessions.set(session.id, session);
     return clone({ task, session });
+  },
+  async importConversation(text, source) {
+    const { text: transcript, redactions } = redactTranscript(text);
+    const { goal, steps } = readTranscript(transcript);
+    if (!goal || !steps.length) {
+      throw new Error(
+        'Guider could not find a goal and steps in that text. '
+        + 'Paste the part of the conversation with the steps in it.',
+      );
+    }
+    const task: Task = {
+      id: uid(), title: goal.slice(0, 120), goal, category: 'setup',
+      application_key: 'unknown', status: 'open', current_session_id: null,
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    const session: Session = {
+      id: uid(), task_id: task.id, state: 'task_created', state_version: 1, control_epoch: 1,
+      observation_mode: 'screenshot_only', outcome: null, current_step_id: null,
+      created_at: timestamp(), expires_at: expiry(),
+    };
+    task.current_session_id = session.id;
+    tasks.set(task.id, task); sessions.set(session.id, session);
+
+    const plan: Plan = {
+      id: uid(), task_id: task.id, session_id: session.id, version: 1, status: 'draft',
+      assumptions: [
+        'Read from the conversation you pasted, word for word. '
+        + 'Nothing here was checked against your screen.',
+      ],
+      policy_version: 'development-1', confirmed_at: null,
+      steps: steps.map((action, index) => ({
+        id: uid(), ordinal: index + 1, title: action.slice(0, 120), action,
+        expected_result: '', success_criterion: action.slice(0, 500), fallback: '',
+        explanation: 'Taken word for word from the conversation you pasted.',
+        application_key: 'unknown', risk: RESTRICTED.test(action) ? 'high' as const : 'low' as const,
+        // The guard's verdict, not the transcript's: a restricted action is shown
+        // and blocked rather than quietly dropped.
+        policy_disposition: RESTRICTED.test(action) ? 'block' as const : 'allow' as const,
+        evidence_kind: 'self_report' as const, required: true, status: 'pending',
+        attempt_count: 0, verified_at: null,
+      })),
+      created_at: timestamp(), updated_at: timestamp(),
+    };
+    plans.set(plan.id, plan);
+    move(session, 'analyzing', 'import_requested');
+    move(session, 'plan_ready', 'import_ready');
+    emit(session, 'plan.ready', { plan_id: plan.id, imported: true, source });
+    move(session, 'awaiting_user_confirmation', 'import_published');
+
+    const operation: Operation = {
+      id: uid(), kind: 'plan', status: 'succeeded', result: null,
+      result_id: plan.id, error: null,
+    };
+    operations.set(operation.id, operation);
+    return clone<ImportAccepted>({
+      task, session, operation_id: operation.id,
+      imported: {
+        id: uid(), source, redactions,
+        steps_extracted: plan.steps.length,
+        steps_blocked: plan.steps.filter(step => step.policy_disposition === 'block').length,
+        created_at: timestamp(),
+      },
+    });
   },
   async history() {
     return clone({ items: [...sessions.values()].reverse().map(session => ({ session,

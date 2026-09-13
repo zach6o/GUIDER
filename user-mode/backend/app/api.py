@@ -29,6 +29,7 @@ from app.guide.steps import (
     current_instruction,
     owned_step,
     record_claim,
+    record_self_report,
     skip_step,
 )
 from app.media import MAX_BYTES, normalize, prepare_frame
@@ -408,6 +409,86 @@ async def skip(
     await transition(db, session, "processing", body.reason, request.state.request_id)
     operation = await queue_instruction(db, session, request.state.request_id)
     result = s.Skipped(
+        step=step_view(step),
+        session=s.Session.model_validate(session),
+        next_operation_id=operation.id,
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.post(
+    "/sessions/{session_id}/steps/{step_id}/verifications",
+    response_model=s.Envelope[s.SelfReported],
+)
+async def verify_step(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.VerifyRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Take the user's word for a step, and say so in the record.
+
+    Doc 05 is explicit that this is not a pass: the result is `user_reported`,
+    the step keeps its `user_claimed` status, and nothing here can produce a
+    verified badge. What it does buy is movement — the next instruction is
+    prepared, so a guide with watching off still reaches the end of its plan.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    if body.evidence_ids:
+        # Not silently ignored: a caller that sent evidence asked for an
+        # objective check, and returning a self-report instead would be a lie.
+        raise GuideError(
+            422,
+            "evidence_required",
+            "Checking a screenshot is not available yet. "
+            "You can tell Guider what happened instead.",
+        )
+    if not body.self_report.strip():
+        raise GuideError(
+            422, "evidence_required", "Say what happened, or share a screenshot to check."
+        )
+    claim = await db.scalar(
+        select(m.CompletionClaim).where(
+            m.CompletionClaim.id == str(body.claim_id),
+            m.CompletionClaim.owner_id == owner.id,
+            m.CompletionClaim.session_id == session.id,
+            m.CompletionClaim.step_id == step.id,
+        )
+    )
+    if claim is None:
+        raise not_found()
+    if claim.status != "user_claimed":
+        raise GuideError(
+            409, "invalid_transition", "That confirmation was replaced by a newer one."
+        )
+
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "verifying", "self_report_requested", request.state.request_id)
+    verification = await record_self_report(
+        db, session, step, claim, body.self_report.strip(), request.state.request_id
+    )
+    # Doc 05: a self-report result returns to awaiting_user_action with the step
+    # still claimed rather than verified. Preparing the next step is `processing`,
+    # the same route skip and retry take.
+    await transition(
+        db, session, "awaiting_user_action", "self_report_recorded", request.state.request_id
+    )
+    await transition(db, session, "processing", "next_step_requested", request.state.request_id)
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.SelfReported(
+        verification=s.Verification.model_validate(verification),
         step=step_view(step),
         session=s.Session.model_validate(session),
         next_operation_id=operation.id,

@@ -229,6 +229,44 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class VerifyRequest(Schema):
+    """Doc 07's verification route needs evidence or an explicit self-report.
+    Only the self-report arm exists today: objective checking arrives with the
+    evidence path, so `evidence_ids` is accepted and refused rather than quietly
+    ignored."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    claim_id: UUID
+    self_report: Annotated[str, Field(max_length=1000)] = ""
+    evidence_ids: Annotated[list[UUID], Field(max_length=3)] = []
+
+
+class Verification(Schema):
+    id: UUID
+    session_id: UUID
+    step_id: UUID
+    claim_id: UUID | None
+    status: Literal["pending", "passed", "mismatch", "inconclusive", "user_reported", "canceled"]
+    verifier_kind: Literal["visual", "text", "self_report"]
+    reason: str
+    observed_confidence: float | None
+    evidence_available: bool
+    instruction_version: int
+    created_at: datetime
+
+
+class SelfReported(Schema):
+    """What a self-report earns. `verified` stays false in every field that
+    could be mistaken for a pass: the step is still `user_claimed` and the
+    session can only ever end `user_reported` on this evidence (doc 05)."""
+
+    verification: Verification
+    step: Step
+    session: Session
+    verified: Literal[False] = False
+    next_operation_id: UUID | None = None
+
+
 class Event(Schema):
     """One entry in the session's ordered, content-free history."""
 

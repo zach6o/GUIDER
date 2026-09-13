@@ -674,6 +674,25 @@
         ],
         "title": "Envelope[Plan]"
       },
+      "Envelope_SelfReported_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SelfReported"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SelfReported]"
+      },
       "Envelope_SessionList_": {
         "properties": {
           "data": {
@@ -1614,6 +1633,46 @@
         ],
         "title": "Screenshot"
       },
+      "SelfReported": {
+        "properties": {
+          "verification": {
+            "$ref": "#/components/schemas/Verification"
+          },
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "verified": {
+            "type": "boolean",
+            "const": false,
+            "title": "Verified",
+            "default": false
+          },
+          "next_operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verification",
+          "step",
+          "session"
+        ],
+        "title": "SelfReported",
+        "description": "What a self-report earns. `verified` stays false in every field that\ncould be mistaken for a pass: the step is still `user_claimed` and the\nsession can only ever end `user_reported` on this evidence (doc 05)."
+      },
       "Session": {
         "properties": {
           "id": {
@@ -2288,6 +2347,140 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "Verification": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "mismatch",
+              "inconclusive",
+              "user_reported",
+              "canceled"
+            ],
+            "title": "Status"
+          },
+          "verifier_kind": {
+            "type": "string",
+            "enum": [
+              "visual",
+              "text",
+              "self_report"
+            ],
+            "title": "Verifier Kind"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "observed_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Confidence"
+          },
+          "evidence_available": {
+            "type": "boolean",
+            "title": "Evidence Available"
+          },
+          "instruction_version": {
+            "type": "integer",
+            "title": "Instruction Version"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "step_id",
+          "claim_id",
+          "status",
+          "verifier_kind",
+          "reason",
+          "observed_confidence",
+          "evidence_available",
+          "instruction_version",
+          "created_at"
+        ],
+        "title": "Verification"
+      },
+      "VerifyRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "claim_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Claim Id"
+          },
+          "self_report": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Self Report",
+            "default": ""
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Evidence Ids",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "claim_id"
+        ],
+        "title": "VerifyRequest",
+        "description": "Doc 07's verification route needs evidence or an explicit self-report.\nOnly the self-report arm exists today: objective checking arrives with the\nevidence path, so `evidence_ids` is accepted and refused rather than quietly\nignored."
       }
     },
     "securitySchemes": {

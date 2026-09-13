@@ -39,7 +39,10 @@ test('a whole guide can be run without touching the mouse', async ({ page }) => 
   }
 
   await expect(status(page)).toHaveText('All done');
-  await expect(page.getByText('Nothing was verified on screen.', { exact: false })).toBeVisible();
+  // Finished, without claiming anything was checked; the summary says the rest.
+  await expect(page.getByText('Guider checked only what it could see', { exact: false }))
+    .toBeVisible();
+  await expect(page.getByRole('button', { name: 'Finish this task' })).toBeVisible();
   await page.screenshot({ path: 'test-results/island-finished.png', animations: 'disabled' });
   expect(errors).toEqual([]);
 });

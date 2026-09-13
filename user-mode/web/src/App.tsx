@@ -15,7 +15,7 @@ import { createFrameSource, type MaskArea } from './overlay/frameSource';
 import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
 import type {
-  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, Session, Task,
+  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, Session, Summary, Task,
 } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -23,7 +23,7 @@ const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
   { id: 'debug', label: 'Fix a problem', icon: Code2 }, { id: 'understand', label: 'Understand something', icon: CircleHelp },
   { id: 'test', label: 'Test my work', icon: CheckCircle2 }, { id: 'git_github', label: 'Git & GitHub', icon: GitBranch },
 ];
-type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live';
+type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live' | 'summary';
 const SOURCE_LABELS: Record<ImportSource, string> = {
   chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', other: 'another assistant',
 };
@@ -54,6 +54,7 @@ export default function App() {
   // Set only for a plan that came from a pasted conversation, so the screen can
   // say where it came from and what the guard did to it.
   const [provenance, setProvenance] = useState<ImportedConversation | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState('');
@@ -84,6 +85,14 @@ export default function App() {
   }, [signedIn, page, task]);
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
+
+  async function openSummary(item: HistoryItem) {
+    await work('Opening…', async () => {
+      const found = await api.summary(item.session.id);
+      if (!found) { setNotice('That task has not finished yet.'); return; }
+      setSession(item.session); setSummary(found); setPage('summary');
+    });
+  }
 
   function navigate(next: Page) {
     if (busy) return;
@@ -300,6 +309,27 @@ export default function App() {
     });
   }
 
+  /**
+   * End the task. `achieved` is only offered when evidence checked every step;
+   * otherwise this finishes as the user's own account, and says so.
+   */
+  async function finishTask() {
+    const current = live.session ?? session;
+    if (!current || !plan) return;
+    const everyStepChecked = plan.steps
+      .filter(step => step.required && step.policy_disposition !== 'block')
+      .every(step => step.status === 'verified');
+    await work('Finishing up…', async () => {
+      const finished = await api.complete(
+        current, everyStepChecked ? 'achieved' : 'user_reported', '',
+      );
+      void stopWatching('Watching stopped with the task.');
+      live.close(); setGuiding(false);
+      setSession(finished.session); setSummary(finished.summary);
+      setPage('summary'); setNotice('');
+    });
+  }
+
   function stopGuiding() {
     void stopWatching('Watching stopped with the guide.');
     live.close();
@@ -453,7 +483,30 @@ export default function App() {
           <p className="privacy-note"><ShieldCheck size={14} /> A plan is a suggestion. Guider never performs these steps for you.</p>
         </div>}
 
-        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <button disabled={!!busy} key={item.session.id} onClick={() => void openTask(item)}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
+        {page === 'summary' && summary && <div className="simple-page summary-page">
+          <button className="text-button back-link" disabled={!!busy} onClick={() => navigate('history')}><ArrowLeft size={16} /> Task history</button>
+          <span className="eyebrow">{summary.outcome === 'achieved' ? 'CHECKED AND FINISHED' : summary.outcome === 'user_reported' ? 'FINISHED ON YOUR WORD' : 'STOPPED'}</span>
+          <h1>{summary.outcome === 'achieved' ? 'Every step was checked.' : summary.outcome === 'user_reported' ? 'You said this is done.' : 'You stopped this task.'}</h1>
+          <p className="muted">{summary.text}</p>
+          <section className="summary-counts" aria-label="What was checked">
+            <article className="summary-count checked"><CheckCircle2 size={19} /><div><strong>{summary.verified_steps.length} checked on screen</strong><small>Guider saw the result of {summary.verified_steps.length === 1 ? 'this step' : 'these steps'}.</small></div></article>
+            <article className="summary-count reported"><CircleHelp size={19} /><div><strong>{summary.unverified_steps.length} on your word</strong><small>Recorded as what you reported. Nothing checked {summary.unverified_steps.length === 1 ? 'it' : 'them'}.</small></div></article>
+          </section>
+          {plan && <ol className="summary-steps">{plan.steps.map(step => {
+            const checked = summary.verified_steps.includes(step.id);
+            const unverified = summary.unverified_steps.includes(step.id);
+            return <li key={step.id} className={checked ? 'summary-step checked' : 'summary-step'}>
+              <span className="summary-mark">{checked ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}</span>
+              <div><strong>{step.title}</strong>
+                <small>{checked ? 'Checked on screen' : step.policy_disposition === 'block' ? 'Needs separate review' : unverified ? 'You reported this' : 'Not started'}</small></div>
+            </li>;
+          })}</ol>}
+          {summary.corrections.length > 0 && <section className="assumptions" aria-label="Worth knowing"><span className="eyebrow">WORTH KNOWING</span><ul>{summary.corrections.map((note, index) => <li key={index}><CircleHelp size={15} />{note}</li>)}</ul></section>}
+          {summary.next_action && <p className="privacy-note"><ShieldCheck size={14} /> {summary.next_action}</p>}
+          <div className="plan-buttons"><button className="text-button" onClick={() => navigate('history')}>See your tasks</button><button className="primary" onClick={reset}>Start something new <ArrowRight size={17} /></button></div>
+        </div>}
+
+        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <button disabled={!!busy} key={item.session.id} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
         {page === 'privacy' && <div className="simple-page"><span className="eyebrow">ALWAYS YOUR CALL</span><h1>A guide. On your terms.</h1><p className="muted">You choose the context. You take the actions.</p><div className="privacy-sections"><article><EyeOff size={23} /><div><h2>Observation is off.</h2><p>Live screen guide can preview a window or tab you choose. It sends only frames you review and submit to OpenAI. Sharing stops when you leave that view or hide Guider. There is no microphone, recording, typing, or clicking.</p></div></article><article><ShieldCheck size={23} /><div><h2>{isDemo ? 'This demo stays in your tab.' : 'Screenshots are private.'}</h2><p>{isDemo ? 'Your task and image live in browser memory. They are not sent to the API or an AI provider, and they disappear when you refresh or close this tab.' : 'Images go to your configured Guider development backend, expire within 24 hours, and can be deleted with their analysis. The local development storage is not approved for real customer media.'}</p></div></article><article><ScanLine size={23} /><div><h2>OpenAI when you connect.</h2><p>Live screen guide uses your OpenAI API key for actual visual guidance. You review each outgoing frame. The original screenshot demo still uses a fixed example. Cloud keys are kept only in local backend memory and cleared on disconnect or expiry.</p></div></article><article><Trash2 size={23} /><div><h2>Delete what you share.</h2><p>Use the trash button beside an uploaded screenshot to remove its pixels and associated explanation. Task and account erasure controls are still on the implementation roadmap.</p></div></article></div></div>}
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
@@ -470,6 +523,7 @@ export default function App() {
       observerAsked={live.state.askedBy === 'observer'}
       stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
       onReplan={() => void askForNewPlan()}
+      onFinish={() => void finishTask()}
       framesObserved={framesObserved}
       watchNotice={watchNotice}
       mount={floating?.mount ?? null}

@@ -257,3 +257,76 @@ You: my key is sk-ant-api03-notarealkeyvalue123`;
       .rejects.toThrow(/goal and steps/i);
   });
 });
+
+
+describe('ending a task', () => {
+  async function reportedThroughout() {
+    const { session } = await started();
+    let latest = session;
+    let current = await demoApi.instruction(latest.id);
+    while (current) {
+      const claimed = await demoApi.claim(latest, current.step.id, 'Done.');
+      const reported = await demoApi.selfReport(
+        claimed.session, current.step.id, claimed.claim_id, 'It happened.',
+      );
+      latest = reported.session;
+      current = await demoApi.instruction(latest.id);
+    }
+    return latest;
+  }
+
+  it('records the user\u2019s word as their word, never as a check', async () => {
+    const finished = await demoApi.complete(await reportedThroughout(), 'user_reported', '');
+
+    expect(finished.session.outcome).toBe('user_reported');
+    expect(finished.summary.verified_steps).toEqual([]);
+    expect(finished.summary.unverified_steps).toHaveLength(3);
+    expect(finished.summary.text).toContain('you told Guider');
+    expect(finished.summary.text).toContain('your own account');
+    expect(finished.summary.text).not.toContain('Every required step was checked');
+  });
+
+  it('refuses to call an unchecked task achieved', async () => {
+    const latest = await reportedThroughout();
+    await expect(demoApi.complete(latest, 'achieved', '')).rejects.toThrow(/have not been checked/);
+    expect((await demoApi.session(latest.id)).state).toBe('awaiting_user_action');
+  });
+
+  it('refuses to finish while steps are still open', async () => {
+    const { session } = await started();
+    await expect(demoApi.complete(session, 'user_reported', ''))
+      .rejects.toThrow(/still open/);
+  });
+
+  it('names a skipped step rather than counting it away', async () => {
+    const { session, current } = await started();
+    const skipped = await demoApi.skipStep(session, current.step.id, 'not_applicable');
+    let latest = skipped.session;
+    let next = await demoApi.instruction(latest.id);
+    while (next) {
+      const claimed = await demoApi.claim(latest, next.step.id, 'Done.');
+      const reported = await demoApi.selfReport(
+        claimed.session, next.step.id, claimed.claim_id, 'It happened.',
+      );
+      latest = reported.session;
+      next = await demoApi.instruction(latest.id);
+    }
+    const finished = await demoApi.complete(latest, 'user_reported', '');
+    expect(finished.summary.corrections.join(' ')).toContain('was skipped');
+    expect(finished.summary.text).toContain('1 was skipped.');
+  });
+
+  it('leaves something to read after a stop', async () => {
+    const { session } = await started();
+    await demoApi.stop(session.id);
+    const summary = await demoApi.summary(session.id);
+    expect(summary?.outcome).toBe('stopped');
+    expect(summary?.text).toContain('You stopped this task.');
+    expect(summary?.verified_steps).toEqual([]);
+  });
+
+  it('has no summary to show before a task ends', async () => {
+    const { session } = await started();
+    expect(await demoApi.summary(session.id)).toBeNull();
+  });
+});

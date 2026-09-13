@@ -229,6 +229,34 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class CompletionRequest(Schema):
+    """How a task ends. `achieved` is a claim about evidence, so the engine
+    checks it; `user_reported` is the user's own account and is labelled as one
+    everywhere it appears."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    outcome: Literal["achieved", "user_reported"]
+    self_report: Annotated[str, Field(max_length=1000)] = ""
+
+
+class Summary(Schema):
+    """What happened, with checked work and reported work kept apart."""
+
+    session_id: UUID
+    outcome: Literal["achieved", "user_reported", "stopped", "failed", "expired"]
+    verified_steps: list[UUID]
+    unverified_steps: list[UUID]
+    corrections: list[str]
+    text: str
+    next_action: str | None
+    created_at: datetime
+
+
+class Completed(Schema):
+    session: Session
+    summary: Summary
+
+
 class ImportRequest(Schema):
     """A conversation the user already had, pasted in. Paste is the only
     transport: no extension, no connector, no third-party credential (ADR-018)."""

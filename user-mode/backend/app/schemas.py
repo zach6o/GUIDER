@@ -229,6 +229,38 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class ImportRequest(Schema):
+    """A conversation the user already had, pasted in. Paste is the only
+    transport: no extension, no connector, no third-party credential (ADR-018)."""
+
+    text: Annotated[str, Field(min_length=20, max_length=32768)]
+    source: Literal["chatgpt", "claude", "gemini", "other"] = "other"
+    category: Category = Category.setup
+    application_key: Annotated[str, Field(max_length=80)] = "unknown"
+
+
+class ImportedConversation(Schema):
+    id: UUID
+    source: Literal["chatgpt", "claude", "gemini", "other"]
+    redactions: int
+    steps_extracted: int
+    steps_blocked: int
+    created_at: datetime
+
+
+class ImportAccepted(Schema):
+    """What an import creates: a task, a session, and work to produce a draft.
+
+    Nothing is confirmed and nothing has started. The plan that arrives is
+    reviewed and confirmed exactly like a generated one.
+    """
+
+    task: Task
+    session: Session
+    operation_id: UUID
+    imported: ImportedConversation
+
+
 class ReplanRequest(Schema):
     """Ask for a replacement roadmap for whatever is left.
 

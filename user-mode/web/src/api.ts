@@ -37,6 +37,7 @@ async function request<T>(path: string, init: RequestInit = {}, binary = false):
 const post = <T,>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 const remote: GuideApi = {
   create: input => post('/tasks', input),
+  importConversation: (text, source) => post('/imports/conversations', { text, source }),
   history: () => request('/sessions'),
   task: id => request(`/tasks/${id}`),
   session: id => request(`/sessions/${id}`),

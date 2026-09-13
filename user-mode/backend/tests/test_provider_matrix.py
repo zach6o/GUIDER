@@ -268,24 +268,78 @@ def test_the_rendered_schema_is_the_same_one_for_every_dialect():
 # --- the gate ------------------------------------------------------------
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1] / "app"
-PROVIDER_NAMES = ("openai", "anthropic", "claude", "gpt-4", "OpenAIVision", "AnthropicClaude")
+
+# What the gate is actually about: code that behaves differently depending on
+# which provider answered. Adapter classes, adapter modules and model names are
+# how that leaks in, so those are forbidden outside `app/providers/`.
+DISPATCH = (
+    "OpenAIVision",
+    "AnthropicClaude",
+    "providers.openai",
+    "providers.anthropic",
+    "gpt-4",
+    "claude-opus",
+    "claude-sonnet",
+    "claude-haiku",
+    "api.openai.com",
+    "api.anthropic.com",
+)
+
+# Vendor words alone are not dispatch. `app/imports/` carries them as provenance
+# the user chose - which assistant a pasted transcript came from, and the speaker
+# labels inside it (ADR-018) - and that is data, not selection. Elsewhere they
+# are allowed only on a line that is declaring that same provenance value.
+VENDOR = ("openai", "anthropic", "chatgpt", "gemini", "claude")
+PROVENANCE = ("imports",)
+PROVENANCE_FIELD = ("source", "import_sources")
 
 
-def test_no_provider_is_named_outside_the_providers_package():
+def sources() -> list[pathlib.Path]:
+    return [
+        path
+        for path in sorted(BACKEND.rglob("*.py"))
+        if "providers" not in path.parts and "__pycache__" not in path.parts
+    ]
+
+
+def lines_of(path: pathlib.Path) -> list[tuple[int, str]]:
+    return [
+        (number, line)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if not line.lstrip().startswith("#")
+    ]
+
+
+def test_no_adapter_or_model_is_named_outside_the_providers_package():
     """The ADR-017 gate, read off the source.
 
-    Anything outside `app/providers/` that branches on which provider answered
-    would make adding the next one a change to that file too.
+    Anything outside `app/providers/` that names an adapter, an adapter module or
+    a provider's model would make adding the next provider a change to that file
+    too.
     """
-    offenders: list[str] = []
-    for path in sorted(BACKEND.rglob("*.py")):
-        if "providers" in path.parts or "__pycache__" in path.parts:
-            continue
-        text = path.read_text(encoding="utf-8")
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if line.lstrip().startswith("#"):
-                continue
-            for name in PROVIDER_NAMES:
-                if name.lower() in line.lower():
-                    offenders.append(f"{path.name}:{line_number}: {line.strip()}")
+    offenders = [
+        f"{path.name}:{number}: {line.strip()}"
+        for path in sources()
+        for number, line in lines_of(path)
+        for name in DISPATCH
+        if name.lower() in line.lower()
+    ]
+    assert offenders == []
+
+
+def test_a_vendor_name_outside_the_providers_package_is_provenance_only():
+    """Where a vendor is named at all, it is because the user said so.
+
+    `app/imports/` reads speaker labels and records which assistant a transcript
+    came from. Nothing else in the application may name one, in any form.
+    """
+    offenders = [
+        f"{path.name}:{number}: {line.strip()}"
+        for path in sources()
+        if not any(part in PROVENANCE for part in path.parts)
+        for number, line in lines_of(path)
+        for name in VENDOR
+        if name in line.lower()
+        and not any(field in line.lower() for field in PROVENANCE_FIELD)
+    ]
     assert offenders == []

@@ -77,10 +77,19 @@ export interface ObservationTick {
   anomaly: 'none' | 'different_os' | 'different_app' | 'outdated_ui' | 'error_dialog' | 'unreadable';
   note: string; frames_observed: number; observation_calls_remaining: number; session: Session;
 }
+export type ImportSource = 'chatgpt' | 'claude' | 'gemini' | 'other';
+export interface ImportedConversation {
+  id: string; source: ImportSource; redactions: number;
+  steps_extracted: number; steps_blocked: number; created_at: string;
+}
+export interface ImportAccepted {
+  task: Task; session: Session; operation_id: string; imported: ImportedConversation;
+}
 export interface Receipt { id: string; status: string; online_purge_due_at: string }
 export interface TaskInput { goal: string; category: Category; application_key: string }
 export interface GuideApi {
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
+  importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
   history(): Promise<{ items: { session: Session; task_title: string }[] }>;
   task(id: string): Promise<Task>;
   session(id: string): Promise<Session>;

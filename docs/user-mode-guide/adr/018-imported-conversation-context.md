@@ -37,3 +37,13 @@ Assume the user is entitled to the transcript they paste and that transcripts co
 | R02/R05/R18 | F02/F05/F18; `POST /imports/conversations`; UX02/UX04 | SEC-09/13/14; T02/T05/T18; v2 phase 4 |
 
 Master traceability: [17](../17-traceability-matrix.md).
+
+## Evidence
+
+Implemented in PR-17. `app/imports/` holds the redactor and the injection check, the `import` role
+is served by the fixture parser and the Anthropic adapter, and `tests/test_imports.py` covers the
+decision's load-bearing claims: an import produces a draft and confirms nothing; an instruction
+hidden in a transcript never becomes a step, in the goal or in the plan; a restricted action is kept
+and blocked so the user can see what was suggested; a pasted key never reaches the stored
+transcript; and text with nothing to follow is refused rather than guessed at. The browser suite
+covers the same ground from the user's side, including that the plan screen says where it came from.

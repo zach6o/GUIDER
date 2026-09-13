@@ -34,6 +34,7 @@ from app.guide.steps import (
     retire_instructions,
     skip_step,
 )
+from app.imports.redact import MAX_TRANSCRIPT, redact
 from app.media import MAX_BYTES, normalize, prepare_frame
 from app.providers.base import ObserveContext
 from app.service import (
@@ -94,6 +95,106 @@ async def create_task(body: s.TaskCreate, request: Request, db: Db, owner: Owner
         task=s.Task.model_validate(task), session=s.Session.model_validate(session)
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 201)
+    return envelope(request, result)
+
+
+@router.post(
+    "/imports/conversations", status_code=202, response_model=s.Envelope[s.ImportAccepted]
+)
+async def import_conversation(
+    body: s.ImportRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Continue from a conversation the user already had somewhere else.
+
+    The text is untrusted data in the SEC-09 sense: it is redacted, stored once
+    for provenance, and read for a goal and candidate steps. What comes back is a
+    draft plan the user confirms, like any other. An import cannot confirm a plan,
+    start a session, switch watching on or change policy (ADR-018).
+    """
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    if len(body.text.encode()) > MAX_TRANSCRIPT:
+        raise GuideError(
+            413, "payload_too_large", "Paste at most 32 KiB of conversation at a time."
+        )
+    await quota(db, m.GuideTask, owner.id, 10, 3600)
+    # Secrets are dropped before the row is written, so nothing that was pasted
+    # by accident is stored even for a moment (ADR-018).
+    transcript, redactions = redact(body.text)
+
+    task = m.GuideTask(
+        id=m.new_id(),
+        owner_id=owner.id,
+        # The real goal comes from the vetted extraction; this is a placeholder the
+        # worker replaces, never anything read out of the transcript.
+        title="Imported conversation",
+        goal="Imported conversation",
+        category=body.category,
+        application_key=body.application_key,
+        expires_at=m.now() + timedelta(days=30),
+    )
+    db.add(task)
+    await db.flush()
+    session = m.GuideSession(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(session)
+    await db.flush()
+    task.current_session_id = session.id
+
+    imported = m.ImportedConversation(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        session_id=session.id,
+        source=body.source,
+        transcript=transcript,
+        redactions=redactions,
+        expires_at=m.now() + timedelta(days=30),
+    )
+    db.add(imported)
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "task.created",
+        request.state.request_id,
+        {"imported": True, "source": body.source, "redactions": redactions},
+    )
+    await transition(db, session, "analyzing", "import_requested", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=task.id,
+        session_id=session.id,
+        kind="import",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(
+        db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
+    )
+    result = s.ImportAccepted(
+        task=s.Task.model_validate(task),
+        session=s.Session.model_validate(session),
+        operation_id=operation.id,
+        imported=s.ImportedConversation.model_validate(imported),
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 
 

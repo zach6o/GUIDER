@@ -22,7 +22,8 @@ from app.guide.steps import (
     publish_instruction,
     retire_instructions,
 )
-from app.providers.base import InstructionContext
+from app.imports.text import vet_import
+from app.providers.base import ImportContext, InstructionContext
 from app.schemas import Analysis
 from app.service import purge_image, usable
 
@@ -144,6 +145,85 @@ async def run_replan(app, db, pending, session, request_id: str) -> None:
         )
 
 
+async def run_import(app, db, pending, session, request_id: str) -> None:
+    """Role `import`: a pasted transcript to a draft plan, and nothing more.
+
+    The guard runs between the importer and the database, so text that addresses
+    Guider never reaches the goal and an injected step is dropped before anyone
+    sees it as something to review. A restricted action *is* kept and marked
+    `block` by `step_policy`, because the user should see what the conversation
+    suggested and why Guider will not do it (ADR-012, ADR-018).
+    """
+    try:
+        if pending.deadline_at <= m.now():
+            raise GuideError(503, "operation_timeout", "Reading the conversation timed out.")
+        task = await db.get(m.GuideTask, pending.task_id)
+        imported = await db.scalar(
+            select(m.ImportedConversation).where(
+                m.ImportedConversation.owner_id == session.owner_id,
+                m.ImportedConversation.session_id == session.id,
+            )
+        )
+        if imported is None:
+            raise GuideError(404, "not_found", "That import is no longer available.")
+        provider = app.state.providers.select("import")
+        proposal = vet_import(
+            await asyncio.wait_for(
+                provider.import_conversation(
+                    ImportContext(transcript=imported.transcript, source=imported.source)
+                ),
+                timeout=30,
+            )
+        )
+        # The goal is the vetted one, never the raw text.
+        task.goal = proposal.goal
+        task.title = proposal.goal[:120]
+        if proposal.application_key and proposal.application_key != "unknown":
+            task.application_key = proposal.application_key
+        task.updated_at = m.now()
+        plan = await persist(db, session, task, proposal.plan)
+        steps = await steps_for(db, plan)
+        imported.extracted_goal = proposal.goal
+        imported.steps_extracted = len(steps)
+        imported.steps_blocked = len(
+            [step for step in steps if step.policy_disposition == "block"]
+        )
+        imported.updated_at = m.now()
+        pending.result_ref = plan.id
+        pending.status = "succeeded"
+        await transition(db, session, "plan_ready", "import_ready", request_id)
+        await record_event(
+            db,
+            session,
+            "plan.ready",
+            request_id,
+            {
+                "plan_id": plan.id,
+                "imported": True,
+                "source": imported.source,
+                "steps_blocked": imported.steps_blocked,
+            },
+        )
+        await transition(db, session, "awaiting_user_confirmation", "import_published", request_id)
+        await record_event(
+            db,
+            session,
+            "plan.confirmation_required",
+            request_id,
+            {"plan_id": plan.id, "version": plan.version},
+        )
+        await record_event(
+            db, session, "operation.completed", request_id, {"operation_id": pending.id}
+        )
+    except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
+        pending.status = "failed"
+        pending.error_code = "dependency_unavailable"
+        await transition(db, session, "task_created", "import_failed", request_id)
+        await record_event(
+            db, session, "operation.failed", request_id, {"operation_id": pending.id}
+        )
+
+
 async def run_instruction(app, db, pending, session, request_id: str) -> None:
     """Role `instruct`: publish one action for the current step.
 
@@ -245,10 +325,13 @@ async def tick(app) -> None:
             return
         pending.status = "running"
         pending.attempt_count += 1
-        if pending.kind in {"plan", "instruct", "replan"}:
-            handler = {"plan": run_plan, "instruct": run_instruction, "replan": run_replan}[
-                pending.kind
-            ]
+        if pending.kind in {"plan", "instruct", "replan", "import"}:
+            handler = {
+                "plan": run_plan,
+                "instruct": run_instruction,
+                "replan": run_replan,
+                "import": run_import,
+            }[pending.kind]
             await handler(app, db, pending, session, request_id)
             pending.completed_at = m.now()
             return

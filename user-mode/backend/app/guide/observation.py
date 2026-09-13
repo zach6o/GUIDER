@@ -47,7 +47,9 @@ async def enable(db, session: m.GuideSession, consent_version: str, request_id: 
             409,
             "consent_version_mismatch",
             "The notice about watching has changed. Read it again before switching this on.",
-            details={"current_version": None},
+            # Name the version the client must show, so it can present the new
+            # notice rather than guessing what changed.
+            details={"current_version": NOTICE_VERSION},
         )
     session.observation_active = True
     session.observation_mode = "window"

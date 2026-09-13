@@ -350,6 +350,21 @@ export const demoApi: GuideApi = {
       step: found.step, session: current, next_operation_id: instructOperation().id,
     });
   },
+  // Watching needs a vision provider, and this demo is a browser tab with no
+  // backend and no provider. Refusing is the only honest answer: a simulated
+  // verdict about a real screen would be an invented observation.
+  async startWatching() {
+    throw new Error(
+      'Watching a window needs a signed-in task on a running Guider backend. '
+      + 'This demo guides you step by step instead.',
+    );
+  },
+  async stopWatching() {
+    throw new Error('Watching was never switched on in this demo.');
+  },
+  async observe() {
+    throw new Error('This demo never looks at your screen.');
+  },
   async events(id, after, waitMs) {
     const log = events.get(id) ?? [];
     const items = log.filter(event => event.sequence > after);

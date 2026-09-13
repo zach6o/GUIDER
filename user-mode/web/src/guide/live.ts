@@ -24,8 +24,12 @@ export interface LiveState {
   phase: LivePhase;
   instruction: Instruction | null;
   step: Step | null;
-  /** The claim the current question is about. Only set while phase is `asking`. */
+  /** The claim the current question is about. Null when the observer asked
+   *  first, because then the user has not claimed anything yet. */
   claimId: string | null;
+  /** Who raised the current question. An observer's `ask` band is evidence
+   *  worth a question, never enough to advance on its own. */
+  askedBy: 'user' | 'observer' | null;
   correction: string;
   error: string;
   paused: boolean;
@@ -36,6 +40,7 @@ export type LiveAction =
   | { type: 'instruction'; current: CurrentInstruction }
   | { type: 'preparing' }
   | { type: 'claimed'; claimId: string }
+  | { type: 'observer_ask' }
   | { type: 'not_yet' }
   | { type: 'finished' }
   | { type: 'failed'; message: string }
@@ -43,7 +48,7 @@ export type LiveAction =
   | { type: 'resume' };
 
 export const initialLiveState: LiveState = {
-  phase: 'idle', instruction: null, step: null, claimId: null,
+  phase: 'idle', instruction: null, step: null, claimId: null, askedBy: null,
   correction: '', error: '', paused: false,
 };
 
@@ -54,21 +59,29 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
     case 'instruction':
       return {
         ...state, phase: 'waiting', instruction: action.current.instruction,
-        step: action.current.step, claimId: null, error: '',
+        step: action.current.step, claimId: null, askedBy: null, error: '',
       };
     case 'preparing':
       // The step stays on screen until the next instruction replaces it, so the
       // island never blanks between steps.
-      return { ...state, phase: 'preparing', claimId: null, correction: '' };
+      return { ...state, phase: 'preparing', claimId: null, askedBy: null, correction: '' };
     case 'claimed':
-      return { ...state, phase: 'asking', claimId: action.claimId, correction: '' };
+      return {
+        ...state, phase: 'asking', claimId: action.claimId, askedBy: 'user', correction: '',
+      };
+    case 'observer_ask':
+      // Middle-band evidence: ask once, with one tap, and never advance on it.
+      if (state.phase !== 'waiting' || state.paused) return state;
+      return { ...state, phase: 'asking', claimId: null, askedBy: 'observer', correction: '' };
     case 'not_yet':
       return {
-        ...state, phase: 'waiting', claimId: null,
+        ...state, phase: 'waiting', claimId: null, askedBy: null,
         correction: 'Still on this step. Try it again, or skip it.',
       };
     case 'finished':
-      return { ...state, phase: 'finished', instruction: null, step: null, claimId: null };
+      return {
+        ...state, phase: 'finished', instruction: null, step: null, claimId: null, askedBy: null,
+      };
     case 'failed':
       return { ...state, phase: 'error', error: action.message };
     case 'pause':
@@ -96,10 +109,15 @@ const LONG_POLL_MS = 25_000;
 export interface LiveGuide {
   state: LiveState;
   session: Session | null;
+  /** Whether a step is genuinely waiting on the user right now. The observer
+   *  may only look while this is true. */
+  awaitingAction: () => boolean;
   start: () => Promise<void>;
   claim: () => Promise<void>;
   answer: (happened: boolean) => Promise<void>;
   skip: () => Promise<void>;
+  /** An observer verdict in the middle band: worth one question, nothing more. */
+  observerAsked: () => void;
   togglePause: () => void;
   close: () => void;
 }
@@ -183,15 +201,24 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
   }), [act, api, state.step, state.paused]);
 
   const answer = useCallback((happened: boolean) => act(async () => {
-    const session = current.current;
+    let session = current.current;
     const step = state.step;
-    if (!session || !step || !state.claimId || state.paused) return;
+    if (!session || !step || state.paused) return;
     if (!happened) {
       dispatch({ type: 'not_yet' });
       return;
     }
+    let claimId = state.claimId;
+    if (!claimId) {
+      // The observer asked, so there is no claim yet. Answering yes is the
+      // user's word, and is recorded as exactly that before anything moves.
+      const claimed = await api.claim(session, step.id, 'Confirmed when Guider asked.');
+      current.current = claimed.session;
+      session = claimed.session;
+      claimId = claimed.claim_id;
+    }
     const reported = await api.selfReport(
-      session, step.id, state.claimId, 'The user said this step was done.',
+      session, step.id, claimId, 'The user said this step was done.',
     );
     current.current = reported.session;
     // Recorded as user_reported, never as a pass. The next step arrives on the
@@ -208,6 +235,13 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
     dispatch({ type: 'preparing' });
   }), [act, api, refresh, state.step, state.paused]);
 
+  const observerAsked = useCallback(() => dispatch({ type: 'observer_ask' }), []);
+
+  const awaitingAction = useCallback(
+    () => state.phase === 'waiting' && !state.paused && state.step !== null,
+    [state.phase, state.paused, state.step],
+  );
+
   const togglePause = useCallback(() => {
     // Local to the island on purpose: with watching off nothing is running on
     // the server to pause, and the session's own pause has no resume route yet.
@@ -219,5 +253,8 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
     following.current = null;
   }, []);
 
-  return { state, session: current.current, start, claim, answer, skip, togglePause, close };
+  return {
+    state, session: current.current, awaitingAction,
+    start, claim, answer, skip, observerAsked, togglePause, close,
+  };
 }

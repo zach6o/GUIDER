@@ -111,6 +111,7 @@ Each item is one pull request. Exit gates are additions to [16](16-testing-strat
 | 13 | `POST /sessions/{id}/observe`, observer role, per-session semaphore, budgets, confidence bands | A 10-minute simulated session stays under 90 observation calls; exhaustion falls back to manual checking |
 | 14 | Continuous-observation consent, live frame counter, one-tap stop incrementing `control_epoch` | Stop revokes in-flight work; counter matches server-side count |
 | 14b | The island runs a server session: start, the published instruction, claim, self-report, skip and the event stream. `POST /sessions/{id}/steps/{step_id}/verifications`, self-report arm only | A whole plan is guided from the server with nothing marked verified; the island renders the engine's instruction, not the plan text |
+| 14c | The consent surface: notice, window choice, mask-once, the tier-2 send loop, the server's frame counter and one-tap stop | Nothing is sent before the notice is accepted and a window chosen; hidden areas are painted out before encoding; running out keeps the guide working |
 | 15 | Stuck detection and the replanner; `POST /sessions/{id}/replan` regenerating remaining steps only | Anomaly injection replans without touching verified steps |
 
 ### Phase 4 · Breadth — proving the abstractions

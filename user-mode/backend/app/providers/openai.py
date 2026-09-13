@@ -16,6 +16,9 @@ from app.guide.guard import POLICY
 from app.providers.base import CheckInput, Guidance, provider_error
 from app.providers.schema import render
 
+# What a bring-your-own-key connection may ask for, cheapest-capable first.
+MODELS: tuple[str, ...] = ("gpt-4.1-mini", "gpt-4.1")
+
 
 class OpenAIVision:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None):

@@ -1,5 +1,42 @@
 # 19 · Implementation status and session handoff
 
+## A second provider, and the gate that proves the abstraction: 2026-09-13
+
+`app/providers/anthropic.py` serves the `guide`, `observe`, `plan` and `instruct` roles against the
+Anthropic Messages API: `x-api-key` with `anthropic-version`, the frame as a base64 image block,
+and `output_config.format` carrying the same internal schema every other adapter is rendered from.
+`schema.py` gained the `native` dialect for it, which closes the schema to undeclared keys rather
+than passing a separate strict flag. Raw httpx, like the OpenAI adapter: the suite drives both by
+injecting a transport, the dependency set is locked, and one adapter written a different way would
+split how the two are tested. No request in the suite leaves the machine.
+
+Models offered are `claude-opus-5` (the default), `claude-sonnet-5` and `claude-haiku-4-5`. A
+refusal (`stop_reason: "refusal"`) and a truncated answer (`max_tokens`) are each reported as what
+they are; neither becomes a verdict.
+
+Proving ADR-017 turned out to mean fixing three leaks the gate test found. `app/cloud.py` imported
+the OpenAI adapter and defaulted its model to an OpenAI name; a connection now records *which*
+provider it belongs to and the registry builds the adapter per call, with the model validated by
+that adapter's capability descriptor. `Settings` gained `provider_id` / `provider_api_key` /
+`provider_model` rather than anything provider-named, and the registry is built per app from those
+settings instead of read at import time. The fixture is still registered first, so with no
+credentials every role resolves to it and reaches no network.
+
+The local guide screen now asks which service a personal key belongs to, and shows what the backend
+said it connected to rather than what was picked in the form.
+
+`tests/test_provider_matrix.py` runs identical fixtures through every adapter serving a role and
+holds each answer to the same schema and the same guard, then reads `app/**.py` and fails if
+anything outside `app/providers/` names a provider at all. That last test is the phase-4 exit gate,
+written as a test rather than a claim.
+
+Not proven: no real Anthropic request has been made. Every answer in the suite is a recorded shape
+replayed through an injected transport, and account-mode provider access stays a development switch
+until D01 selects a provider.
+
+Current verification: 266 backend tests pass and 2 skip on SQLite, 94 web unit tests pass, and 32
+browser scenarios pass in installed Chrome.
+
 ## Stuck detection and the replanner: 2026-09-13
 
 A guide can now say that it is going nowhere, and offer a different plan for what is left.

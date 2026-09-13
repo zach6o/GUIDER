@@ -118,7 +118,7 @@ Each item is one pull request. Exit gates are additions to [16](16-testing-strat
 
 | PR | Work | Exit gate |
 |---|---|---|
-| 16 | Anthropic adapter plus a provider matrix test running identical fixtures through every adapter | Zero provider-specific branches outside `app/providers/` |
+| 16 | Anthropic adapter plus a provider matrix test running identical fixtures through every adapter. The BYOK connection records which provider it belongs to; `Settings` becomes provider-neutral | Zero provider-specific branches outside `app/providers/`, enforced by a test that reads the source |
 | 17 | Conversation import, paste-first, guarded, producing a draft plan ([ADR-018](adr/018-imported-conversation-context.md)) | An instruction injected inside a pasted transcript is caught by the guard |
 | 18 | Session summary and completed-guide history | Verified and self-reported steps are visibly distinguished |
 

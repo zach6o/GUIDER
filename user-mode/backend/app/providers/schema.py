@@ -27,6 +27,15 @@ def strict_schema(model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
+def closed_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """`strict_schema`, closed to extra keys. Providers whose structured output
+    validates against the schema itself refuse anything not declared here."""
+    schema = strict_schema(model)
+    schema["additionalProperties"] = False
+    schema.setdefault("required", sorted(schema.get("properties", {})))
+    return schema
+
+
 def render(model: type[BaseModel], name: str, dialect: StructuredOutput) -> dict[str, Any]:
     """The provider-shaped response-format block for `model`."""
     if dialect == "json_schema":
@@ -38,6 +47,10 @@ def render(model: type[BaseModel], name: str, dialect: StructuredOutput) -> dict
                 "schema": strict_schema(model),
             }
         }
+    if dialect == "native":
+        # The schema carries the constraint itself here; there is no separate
+        # strict flag and no name to declare.
+        return {"format": {"type": "json_schema", "schema": closed_schema(model)}}
     raise NotImplementedError(
         f"Structured-output dialect {dialect!r} has no renderer yet; "
         "add it with the adapter that needs it."

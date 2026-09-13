@@ -17,20 +17,20 @@ from pydantic import Field, SecretStr
 from app.errors import GuideError
 from app.guide.guard import POLICY, vet_guidance
 from app.media import normalize
-from app.providers.base import MAX_IMAGE, MODEL, CheckInput, Guidance
-from app.providers.openai import OpenAIVision
+from app.providers.base import MAX_IMAGE, CheckInput, Guidance
 from app.schemas import Schema
 
-# Moved to app.providers in PR-1; re-exported so existing importers resolve unchanged.
+# Moved to app.providers in PR-1; re-exported so existing importers resolve
+# unchanged. The adapter itself is no longer among them: a connection stores
+# which provider it belongs to and the registry builds it, so this module names
+# no provider at all (ADR-017).
 __all__ = [
     "MAX_IMAGE",
-    "MODEL",
     "POLICY",
     "CheckInput",
     "Connection",
     "Connections",
     "Guidance",
-    "OpenAIVision",
     "expire_connections",
     "prepare_cloud_image",
     "router",
@@ -38,20 +38,29 @@ __all__ = [
 
 
 class ConnectInput(Schema):
+    """A key, and which service it belongs to. The model list is the adapter's,
+    checked by its capability descriptor rather than spelled out here."""
+
     api_key: SecretStr = Field(min_length=20, max_length=512)
-    model: MODEL = "gpt-4.1-mini"
+    # Blank means "whichever adapter serves this role first", so a client that
+    # does not care never has to know an id.
+    provider: str = Field(default="", max_length=40)
+    model: str = Field(default="", max_length=80)
     accepted_cloud_terms: Literal[True]
 
 
 class ConnectOutput(Schema):
     connection_token: str
-    model: MODEL
+    provider: str
+    display_name: str
+    model: str
     expires_in_seconds: int
 
 
 @dataclass
 class Connection:
     key: SecretStr
+    provider: str
     model: str
     expires: float
     epoch: int = 1
@@ -108,7 +117,7 @@ def local_only(request: Request) -> Connections:
 def connection_for(request: Request, authorization: str) -> tuple[str, Connection]:
     registry = local_only(request)
     if not authorization.startswith("Bearer "):
-        raise GuideError(401, "connection_expired", "Connect your OpenAI key to continue.")
+        raise GuideError(401, "connection_expired", "Connect your provider key to continue.")
     token = hashlib.sha256(authorization[7:].encode()).hexdigest()
     connection = registry.items.get(token)
     if not connection:
@@ -127,15 +136,29 @@ async def connect(body: ConnectInput, request: Request) -> ConnectOutput:
     if len(registry.attempts) >= 10 or len(registry.items) >= 8:
         raise GuideError(429, "rate_limited", "Too many connections. Disconnect or wait a minute.")
     registry.attempts.append(now)
-    await request.app.state.cloud_provider.validate(body.api_key, body.model)
+    providers = request.app.state.providers
+    # The id came from the request, so it is checked the same way an unknown one
+    # is: the registry refuses without saying which providers exist.
+    descriptor = (
+        providers.descriptor(body.provider, "guide")
+        if body.provider
+        else providers.first_for("guide")
+    )
+    model = descriptor.model_or_default(body.model)
+    await providers.build(descriptor.id, "guide").validate(body.api_key, model)
     capability = secrets.token_urlsafe(32)
     registry.items[hashlib.sha256(capability.encode()).hexdigest()] = Connection(
         key=body.api_key,
-        model=body.model,
+        provider=descriptor.id,
+        model=model,
         expires=time.monotonic() + 1800,
     )
     return ConnectOutput(
-        connection_token=capability, model=body.model, expires_in_seconds=1800
+        connection_token=capability,
+        provider=descriptor.id,
+        display_name=descriptor.display_name,
+        model=model,
+        expires_in_seconds=1800,
     )
 
 
@@ -184,9 +207,8 @@ async def check(body: CheckInput, request: Request, authorization: Annotated[str
         image = await asyncio.to_thread(prepare_cloud_image, body.image_base64)
         if connection.epoch != epoch:
             raise asyncio.CancelledError()
-        proposal = await request.app.state.cloud_provider.analyze(
-            connection.key, connection.model, body, image
-        )
+        provider = request.app.state.providers.build(connection.provider, "guide")
+        proposal = await provider.analyze(connection.key, connection.model, body, image)
         # The adapter cannot approve its own output; the guard decides.
         return vet_guidance(proposal)
 

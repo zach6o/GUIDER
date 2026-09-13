@@ -93,8 +93,14 @@ def test_unimplemented_dialect_raises_instead_of_emitting_an_ignored_format():
 
 
 def test_compatibility_shims_still_resolve():
+    """The PR-1 re-exports, minus the adapter.
+
+    `app.cloud` no longer re-exports `OpenAIVision`: a connection records which
+    provider it belongs to and the registry builds the adapter, so that module
+    names no provider at all (ADR-017).
+    """
     from app import cloud, provider
 
     assert provider.FixtureProvider is FixtureProvider
-    assert cloud.OpenAIVision is OpenAIVision
     assert cloud.Guidance is Guidance
+    assert not hasattr(cloud, "OpenAIVision")

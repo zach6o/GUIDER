@@ -16,9 +16,13 @@ from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_even
 from app.guide.guard import vet_observation
 from app.guide.observation import (
     MAX_OBSERVATION_CALLS,
+    NOTICE_VERSION,
     apply,
+    calls_remaining,
     check_budget,
+    enable,
 )
+from app.guide.observation import stop as stop_watching
 from app.guide.planner import steps_for
 from app.guide.steps import (
     confirmed_plan,
@@ -449,6 +453,56 @@ async def events(
     )
 
 
+def observation_state(request: Request, session: m.GuideSession) -> s.ObservationState:
+    return s.ObservationState(
+        active=session.observation_active,
+        frames_observed=session.frames_observed,
+        observation_calls_remaining=calls_remaining(session),
+        consent_version=NOTICE_VERSION,
+        session=s.Session.model_validate(session),
+    )
+
+
+@router.post("/sessions/{session_id}/observation", response_model=s.Envelope[s.ObservationState])
+async def start_observation(
+    session_id: UUID,
+    body: s.ObservationConsent,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    await confirmed_plan(db, session)
+    await enable(db, session, body.consent_version, request.state.request_id)
+    # Record what this user actually agreed to, not merely that they agreed.
+    owner.privacy_notice_version = body.consent_version
+    owner.updated_at = m.now()
+    await transition(db, session, session.state, "observation_enabled", request.state.request_id)
+    result = observation_state(request, session)
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.delete("/sessions/{session_id}/observation", response_model=s.Envelope[s.ObservationState])
+async def stop_observation(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """Always available, never rate limited, and idempotent: a control that stops
+    something must not itself be able to fail for being pressed twice."""
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    if session.observation_active:
+        await stop_watching(db, session, "user", request.state.request_id)
+        await cancel_pending(db, session)
+        await transition(
+            db, session, session.state, "observation_stopped", request.state.request_id
+        )
+    return envelope(request, observation_state(request, session))
+
+
 @router.post("/sessions/{session_id}/observe", response_model=s.Envelope[s.ObservationTick])
 async def observe(
     session_id: UUID,
@@ -468,6 +522,7 @@ async def observe(
         raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
     check_budget(session)
 
+    epoch = session.control_epoch
     gate = request.app.state.observation
     gate.admit(session.id, time.monotonic())
     if gate.lock(session.id).locked():
@@ -493,6 +548,11 @@ async def observe(
                 timeout=20,
             )
         )
+        # A stop that landed while the provider was busy wins: the epoch moved,
+        # so this frame is discarded without spending budget or advancing a step.
+        await db.refresh(session)
+        if not session.observation_active or session.control_epoch != epoch:
+            raise GuideError(409, "observation_stopped", "Watching was switched off.")
         decision = await apply(db, session, step, instruction, result, request.state.request_id)
         if decision == "advance":
             await queue_instruction(db, session, request.state.request_id)

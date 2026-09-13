@@ -29,6 +29,59 @@ ASK_AT = 0.60
 
 VERIFICATION_RETENTION = timedelta(days=30)
 
+# The notice the user agreed to. Draft until D06 approves the wording; a session
+# that accepted an older version must be asked again rather than silently carried
+# forward, which is what pinning the version here buys.
+NOTICE_VERSION = "observation-draft-1"
+
+
+def calls_remaining(session: m.GuideSession) -> int:
+    return max(0, MAX_OBSERVATION_CALLS - session.observation_calls)
+
+
+async def enable(db, session: m.GuideSession, consent_version: str, request_id: str) -> None:
+    """Switch watching on. Off is the default and every path back to off is
+    cheaper than this one (ADR-003, preserved by ADR-016)."""
+    if consent_version != NOTICE_VERSION:
+        raise GuideError(
+            409,
+            "consent_version_mismatch",
+            "The notice about watching has changed. Read it again before switching this on.",
+            details={"current_version": None},
+        )
+    session.observation_active = True
+    session.observation_mode = "window"
+    session.observation_started_at = m.now()
+    session.last_user_activity_at = m.now()
+    await record_event(
+        db,
+        session,
+        "observation.enabled",
+        request_id,
+        {"consent_version": consent_version, "budget": MAX_OBSERVATION_CALLS},
+    )
+
+
+async def stop(db, session: m.GuideSession, reason: str, request_id: str) -> None:
+    """One tap, and everything in flight stops counting.
+
+    Incrementing control_epoch is what makes this immediate rather than advisory:
+    work bound to the old epoch is discarded wherever it is, exactly as pause and
+    stop already do.
+    """
+    session.observation_active = False
+    session.observation_mode = "screenshot_only"
+    session.observation_started_at = None
+    session.control_epoch += 1
+    session.last_user_activity_at = m.now()
+    await record_event(
+        db,
+        session,
+        "observation.stopped",
+        request_id,
+        {"reason": reason, "frames_observed": session.frames_observed},
+    )
+
 
 class SessionGate:
     """One observation in flight per session, and a per-minute window.

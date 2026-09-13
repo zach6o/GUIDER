@@ -92,6 +92,9 @@ const remote: GuideApi = {
   events: (id, after, waitMs, signal) => request(
     `/sessions/${id}/events?after=${after}&wait_ms=${waitMs}`, { signal },
   ),
+  replan: (session, reason) => post(`/sessions/${session.id}/replan`, {
+    expected_version: session.state_version, reason,
+  }),
   startWatching: (session, consentVersion) => post(`/sessions/${session.id}/observation`, {
     expected_version: session.state_version, consent_version: consentVersion, accepted: true,
   }),

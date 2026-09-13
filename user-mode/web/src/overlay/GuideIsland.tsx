@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, SkipForward, X } from 'lucide-react';
+import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, SkipForward, X } from 'lucide-react';
 import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
@@ -26,8 +26,12 @@ export interface GuideIslandProps {
    *  cannot read frames at all. */
   watchNotice?: string;
   mount: HTMLElement | null;
+  /** What the session says is going wrong, in the user's language. Empty when
+   *  the guide is simply working. */
+  stuck?: string;
   onStartWatching?: () => void;
   onStopWatching?: () => void;
+  onReplan?: () => void;
   onClaim: () => void;
   onAnswer: (happened: boolean) => void;
   onTogglePause: () => void;
@@ -126,6 +130,13 @@ export function GuideIsland(props: GuideIslandProps) {
           {why && <p>{why}</p>}
           {stuck && <p><strong>If that doesn&rsquo;t work:</strong> {stuck}</p>}
         </details>}
+        {props.stuck && props.onReplan && <div className="island-stuck" role="status">
+          <p>{props.stuck}</p>
+          <button className="text-button" onClick={props.onReplan}>
+            <RefreshCw size={14} /> Ask for a different plan
+          </button>
+          <small>What you have already done is kept. Only the rest is replaced.</small>
+        </div>}
         {props.watchNotice && <p className="island-watch-notice" role="status">{props.watchNotice}</p>}
         {watching
           ? <div className="island-watching">

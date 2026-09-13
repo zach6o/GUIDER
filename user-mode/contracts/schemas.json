@@ -1526,6 +1526,32 @@
         ],
         "title": "PlanRequest"
       },
+      "ReplanRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "stuck",
+              "anomaly",
+              "user"
+            ],
+            "title": "Reason",
+            "default": "user"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReplanRequest",
+        "description": "Ask for a replacement roadmap for whatever is left.\n\nThe reason recorded here is the user's; the planner is given what the session\nactually recorded \u2014 the stuck reason and any observed anomaly \u2014 rather than\na claim typed by a client."
+      },
       "Screenshot": {
         "properties": {
           "id": {

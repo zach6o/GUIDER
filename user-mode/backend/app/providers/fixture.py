@@ -75,6 +75,33 @@ FIXTURE_PLAN = [
 ]
 
 
+# What the fixture proposes when a task is stuck or the screen stopped matching.
+FIXTURE_REPLAN = [
+    {
+        "title": "Describe what you can see",
+        "action": "Write down what the window shows now, in your own words.",
+        "expected_result": "You have a short description of the current screen.",
+        "success_criterion": "A description of the current screen exists.",
+        "fallback": "If the window is gone, reopen the application first.",
+        "explanation": (
+            "The previous steps assumed something that is no longer true. "
+            "What is on screen now is where a working plan has to start."
+        ),
+    },
+    {
+        "title": "Try the last step once more, slowly",
+        "action": "Repeat the step you were on, pausing after each part.",
+        "expected_result": "Either the step works, or you can say exactly where it stops.",
+        "success_criterion": "The step completes, or the point where it fails is identified.",
+        "fallback": "If nothing happens at all, close and reopen the application.",
+        "explanation": (
+            "A step that fails halfway looks the same as one that never started. "
+            "Knowing which it is decides what comes next."
+        ),
+    },
+]
+
+
 class FixtureProvider:
     """A test double, not vision: exact fixture recognition, no external transmission.
 
@@ -85,6 +112,8 @@ class FixtureProvider:
         self.fixture_hash = normalize(python_fixture()).digest
 
     async def plan(self, ctx: PlanContext) -> ProposedPlan:
+        if ctx.reason != "initial":
+            return self.replan(ctx)
         return ProposedPlan(
             assumptions=[
                 "This fixed roadmap comes from a development fixture, not from a planner model.",
@@ -92,6 +121,22 @@ class FixtureProvider:
             ],
             steps=[
                 ProposedStep(application_key=ctx.application_key, **step) for step in FIXTURE_PLAN
+            ],
+        )
+
+    def replan(self, ctx: PlanContext) -> ProposedPlan:
+        """A second attempt at whatever is left. The fixture cannot diagnose, so
+        it proposes the recovery any stuck task can use rather than pretending to
+        know what went wrong."""
+        return ProposedPlan(
+            assumptions=[
+                "This replacement roadmap comes from a development fixture, not from a planner.",
+                f"Asked for because the task was {ctx.reason.replace('_', ' ')}.",
+                f"{len(ctx.completed)} earlier step(s) are already done and are kept as they are.",
+            ],
+            steps=[
+                ProposedStep(application_key=ctx.application_key, **step)
+                for step in FIXTURE_REPLAN
             ],
         )
 

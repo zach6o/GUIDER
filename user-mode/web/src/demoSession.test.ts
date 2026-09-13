@@ -132,3 +132,63 @@ describe('the event log', () => {
     expect(second.next_after).toBe(first.next_after);
   });
 });
+
+describe('asking for a different plan', () => {
+  it('says the guide is stuck after the same step is claimed twice', async () => {
+    const { session, current } = await started();
+    const first = await demoApi.claim(session, current.step.id, 'Done.');
+    await demoApi.claim(first.session, current.step.id, 'Done again.');
+
+    const events = await demoApi.events(session.id, 0, 0);
+    const stuck = events.items.filter(event => event.type === 'session.stuck_detected');
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].payload.reason).toBe('repeated_attempts');
+    // Saying so changes nothing about where the guide is.
+    expect((await demoApi.session(session.id)).state).toBe('awaiting_user_action');
+  });
+
+  it('keeps what is done and proposes only what is left', async () => {
+    const { session, current } = await started();
+    const claimed = await demoApi.claim(session, current.step.id, 'Done.');
+    const reported = await demoApi.selfReport(
+      claimed.session, current.step.id, claimed.claim_id, 'It happened.',
+    );
+
+    const pending = await demoApi.replan(reported.session, 'user');
+    const operation = await demoApi.operation(pending.operation_id);
+    const replacement = await demoApi.plan(operation.result_id!);
+
+    expect(replacement.version).toBe(2);
+    expect(replacement.status).toBe('draft');
+    expect(replacement.steps[0].title).toBe(current.step.title);
+    expect(replacement.steps[0].status).toBe('user_claimed');
+    expect(replacement.steps.slice(1).map(step => step.title)).toEqual([
+      'Describe what you can see', 'Try the last step once more, slowly',
+    ]);
+    expect(replacement.steps.map(step => step.ordinal)).toEqual([1, 2, 3]);
+    expect(pending.session.state).toBe('awaiting_user_confirmation');
+    expect(pending.session.current_step_id).toBeNull();
+  });
+
+  it('continues on the new plan, past the step already reported done', async () => {
+    const { session, current } = await started();
+    const claimed = await demoApi.claim(session, current.step.id, 'Done.');
+    const reported = await demoApi.selfReport(
+      claimed.session, current.step.id, claimed.claim_id, 'It happened.',
+    );
+    const pending = await demoApi.replan(reported.session, 'user');
+    const operation = await demoApi.operation(pending.operation_id);
+    const replacement = await demoApi.plan(operation.result_id!);
+
+    const confirmed = await demoApi.confirmPlan(replacement, pending.session);
+    const begun = await demoApi.start(confirmed.session);
+    const next = await demoApi.instruction(begun.session.id);
+    expect(next!.step.title).toBe('Describe what you can see');
+  });
+
+  it('refuses to replan when no step is waiting', async () => {
+    const { session, plan } = await confirmedPlan();
+    await expect(demoApi.replan(session, 'user')).rejects.toThrow(/no step waiting/i);
+    expect(plan.status).toBe('confirmed');
+  });
+});

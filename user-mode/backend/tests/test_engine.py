@@ -34,10 +34,13 @@ EXPECTED: dict[str, set[str]] = {
     | PRIORITY,
     "instruction_ready": {"awaiting_user_action", "awaiting_user_confirmation", "blocked"}
     | PRIORITY,
+    # `analyzing` is doc 05's replan row: a stuck or mismatched guide may ask for
+    # a replacement roadmap for whatever is left.
     "awaiting_user_action": {
         "verifying",
         "capturing",
         "processing",
+        "analyzing",
         "completed",
         "awaiting_user_confirmation",
         "blocked",

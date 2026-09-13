@@ -10,6 +10,12 @@ from app.errors import GuideError
 from app.guide.engine import record_event, transition
 from app.guide.guard import vet_analysis, vet_instruction
 from app.guide.planner import context_for, persist, steps_for
+from app.guide.replan import (
+    carried_verifications,
+    context_for_replan,
+    persist_replan,
+    settled_steps,
+)
 from app.guide.steps import (
     confirmed_plan,
     next_open_step,
@@ -58,6 +64,81 @@ async def run_plan(app, db, pending, session, request_id: str) -> None:
             "plan_failed",
             request_id,
         )
+        await record_event(
+            db, session, "operation.failed", request_id, {"operation_id": pending.id}
+        )
+
+
+async def replan_reason(db, session) -> tuple[str, str]:
+    """Why this task is being replanned, taken from what the session recorded
+    rather than from anything a client asserted."""
+    latest = await db.scalar(
+        select(m.GuidanceEvent)
+        .where(
+            m.GuidanceEvent.session_id == session.id,
+            m.GuidanceEvent.type == "session.stuck_detected",
+        )
+        .order_by(m.GuidanceEvent.sequence.desc())
+        .limit(1)
+    )
+    recorded = (latest.payload or {}).get("reason", "") if latest else ""
+    if recorded.startswith("anomaly:"):
+        return "anomaly", recorded.split(":", 1)[1]
+    return ("stuck", "none") if recorded else ("user", "none")
+
+
+async def run_replan(app, db, pending, session, request_id: str) -> None:
+    """Role `plan`, asked a second time: replace what is left of the roadmap.
+
+    Settled steps are carried across exactly as they are, so nothing verified can
+    be revised, un-verified or asked for again. The result is a draft the user
+    reviews, like every other plan.
+    """
+    try:
+        if pending.deadline_at <= m.now():
+            raise GuideError(503, "operation_timeout", "Planning timed out.")
+        task = await db.get(m.GuideTask, pending.task_id)
+        previous = await confirmed_plan(db, session)
+        done = await settled_steps(db, previous)
+        reason, anomaly = await replan_reason(db, session)
+        provider = app.state.providers.select("plan")
+        proposal = await asyncio.wait_for(
+            provider.plan(context_for_replan(task, done, reason, anomaly)), timeout=30
+        )
+        plan = await persist_replan(db, session, task, proposal, done)
+        await carried_verifications(db, session, plan)
+        pending.result_ref = plan.id
+        pending.status = "succeeded"
+        # A replacement roadmap is not confirmed and is not the one being
+        # followed: the session waits on the user until they say otherwise.
+        session.stuck_since = None
+        await transition(db, session, "plan_ready", "replan_ready", request_id)
+        await record_event(
+            db,
+            session,
+            "plan.ready",
+            request_id,
+            {"plan_id": plan.id, "reason": reason, "carried_steps": len(done)},
+        )
+        await transition(db, session, "awaiting_user_confirmation", "replan_published", request_id)
+        await record_event(
+            db,
+            session,
+            "plan.confirmation_required",
+            request_id,
+            {"plan_id": plan.id, "version": plan.version},
+        )
+        await record_event(
+            db, session, "operation.completed", request_id, {"operation_id": pending.id}
+        )
+    except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
+        pending.status = "failed"
+        pending.error_code = "dependency_unavailable"
+        # A failed replan writes nothing: the plan being followed is still the
+        # confirmed one, and the checkpoint is the step the user was on. Doc 05
+        # has no analyzing -> awaiting_user_action row, so recovery goes through
+        # `blocked`, exactly as a failed instruction does.
+        await transition(db, session, "blocked", "replan_failed", request_id)
         await record_event(
             db, session, "operation.failed", request_id, {"operation_id": pending.id}
         )
@@ -164,8 +245,10 @@ async def tick(app) -> None:
             return
         pending.status = "running"
         pending.attempt_count += 1
-        if pending.kind in {"plan", "instruct"}:
-            handler = run_plan if pending.kind == "plan" else run_instruction
+        if pending.kind in {"plan", "instruct", "replan"}:
+            handler = {"plan": run_plan, "instruct": run_instruction, "replan": run_replan}[
+                pending.kind
+            ]
             await handler(app, db, pending, session, request_id)
             pending.completed_at = m.now()
             return

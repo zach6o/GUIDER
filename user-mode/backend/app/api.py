@@ -24,12 +24,14 @@ from app.guide.observation import (
 )
 from app.guide.observation import stop as stop_watching
 from app.guide.planner import steps_for
+from app.guide.replan import check_stuck
 from app.guide.steps import (
     confirmed_plan,
     current_instruction,
     owned_step,
     record_claim,
     record_self_report,
+    retire_instructions,
     skip_step,
 )
 from app.media import MAX_BYTES, normalize, prepare_frame
@@ -374,6 +376,10 @@ async def claim_step(
         raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
     claim = await record_claim(db, session, step, body.statement, request.state.request_id)
     session.last_user_activity_at = m.now()
+    instruction = await current_instruction(db, session)
+    if instruction is not None:
+        # Saying "done" repeatedly on the same step is the guide going nowhere.
+        await check_stuck(db, session, step, instruction, "none", request.state.request_id)
     # Same-state: a claim is not progress, so the session does not move.
     await transition(db, session, session.state, "user_claimed", request.state.request_id)
     result = s.Claimed(
@@ -582,6 +588,72 @@ async def stop_observation(session_id: UUID, request: Request, db: Db, owner: Ow
             db, session, session.state, "observation_stopped", request.state.request_id
         )
     return envelope(request, observation_state(request, session))
+
+
+@router.post("/sessions/{session_id}/replan", status_code=202, response_model=s.Envelope[s.Pending])
+async def replan(
+    session_id: UUID,
+    body: s.ReplanRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Ask for a new roadmap for the part that is left.
+
+    What is already done is not up for revision: the replacement carries every
+    settled step across untouched, and only what remains is proposed again. The
+    result is a draft, like every other plan, because a roadmap the user has not
+    seen is not one they agreed to (ADR-010).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    await confirmed_plan(db, session)
+    if await db.scalar(
+        select(m.OperationRow.id).where(
+            m.OperationRow.session_id == session.id,
+            m.OperationRow.status.in_(["queued", "running"]),
+        )
+    ):
+        raise GuideError(409, "operation_in_progress", "An operation is already running.")
+    await quota(db, m.OperationRow, owner.id, 10, 60)
+
+    session.last_user_activity_at = m.now()
+    session.checkpoint_state = session.state
+    # The step being replaced stops being current now: its instruction cannot
+    # outlive the plan version it belongs to.
+    await retire_instructions(db, session)
+    session.current_step_id = None
+    await record_event(
+        db, session, "session.replan_requested", request.state.request_id, {"reason": body.reason}
+    )
+    await transition(db, session, "analyzing", "replan", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="replan",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(
+        db, session, "operation.started", request.state.request_id, {"operation_id": operation.id}
+    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
+    return envelope(request, result)
 
 
 @router.post("/sessions/{session_id}/observe", response_model=s.Envelope[s.ObservationTick])

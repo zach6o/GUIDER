@@ -45,11 +45,22 @@ class Guidance(Schema):
 
 
 class PlanContext(Schema):
-    """Everything a planner may see. No screen content and no account data."""
+    """Everything a planner may see. No screen content and no account data.
+
+    Replanning adds only what the planner needs to avoid repeating work: the
+    titles of steps already behind the guide, why a new plan was asked for, and
+    the anomaly an observer reported, if any. Titles are the planner's own
+    earlier words, not anything read from the user's screen.
+    """
 
     goal: str = Field(min_length=1, max_length=4000)
     category: str = Field(max_length=30)
     application_key: str = Field(max_length=80)
+    reason: Literal["initial", "stuck", "anomaly", "user"] = "initial"
+    completed: list[Annotated[str, Field(max_length=120)]] = Field(max_length=12, default=[])
+    anomaly: Literal[
+        "none", "different_os", "different_app", "outdated_ui", "error_dialog", "unreadable"
+    ] = "none"
 
 
 class ProposedStep(Schema):

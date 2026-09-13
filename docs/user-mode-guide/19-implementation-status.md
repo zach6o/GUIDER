@@ -1,5 +1,32 @@
 # 19 · Implementation status and session handoff
 
+## Stuck detection and the replanner: 2026-09-13
+
+A guide can now say that it is going nowhere, and offer a different plan for what is left.
+
+Three things count as stuck, and all of them are reported rather than acted on: an observer
+reporting `different_os`, `different_app` or `outdated_ui`; the same step claimed twice; and one
+step staying current for more than five minutes. The session records `session.stuck_detected` once,
+sets `stuck_since`, and changes nothing else. The island shows what the session said, in the user's
+words, with the offer.
+
+`POST /sessions/{id}/replan` queues an Operation of the new kind `replan`. The worker asks the
+`plan` role again, with a context carrying only the titles of settled steps, the recorded reason and
+any observed anomaly — no screen content, and nothing a client asserted. Every settled step is
+copied into the new version with its status, `verified_at` and a `previous_step_id` pointing at the
+row it came from; a `user_reported` result is copied with it, so a step reported done is not asked
+for again. Only the remainder is proposed. The result is a draft: the user reviews it on the
+existing plan screen and confirms it like any other plan, which is also what makes `confirm` and
+`start` work unchanged for a replanned session.
+
+Doc 05 gained the `awaiting_user_action → analyzing` row this needs, and `tests/test_engine.py` —
+the transition table written out independently of the engine — gained the same row. A failed replan
+goes to `blocked` with the step as its checkpoint, exactly as a failed instruction does, because
+doc 05 has no `analyzing → awaiting_user_action` row.
+
+Current verification: 252 backend tests pass and 2 skip on SQLite, 94 web unit tests pass, and 31
+browser scenarios pass in installed Chrome.
+
 ## Watching, with a surface: 2026-09-13
 
 The consent routes from PR-14 now have somewhere to be used from. The island offers "Let Guider

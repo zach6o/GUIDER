@@ -15,6 +15,7 @@ from datetime import timedelta
 from app import models as m
 from app.errors import GuideError
 from app.guide.engine import record_event, transition
+from app.guide.replan import check_stuck
 
 # Per-session ceilings from ADR-016. Enforced again here because the browser's
 # limiter is advice: it runs on the user's machine and can be bypassed.
@@ -172,6 +173,9 @@ async def apply(
         },
     )
     if decision != "advance":
+        # A screen that stopped matching the plan, or a step that is going
+        # nowhere, is worth saying once. It changes no state by itself.
+        await check_stuck(db, session, step, instruction, result.anomaly, request_id)
         return decision
 
     # awaiting_user_action -> verifying on accepted new evidence, per doc 05.

@@ -33,6 +33,9 @@ export interface LiveState {
   correction: string;
   error: string;
   paused: boolean;
+  /** Why the session says it is going nowhere, if it has said so. Nothing about
+   *  being stuck changes what the guide does; it only offers a way out. */
+  stuck: string;
 }
 
 export type LiveAction =
@@ -41,6 +44,7 @@ export type LiveAction =
   | { type: 'preparing' }
   | { type: 'claimed'; claimId: string }
   | { type: 'observer_ask' }
+  | { type: 'stuck'; reason: string }
   | { type: 'not_yet' }
   | { type: 'finished' }
   | { type: 'failed'; message: string }
@@ -49,7 +53,7 @@ export type LiveAction =
 
 export const initialLiveState: LiveState = {
   phase: 'idle', instruction: null, step: null, claimId: null, askedBy: null,
-  correction: '', error: '', paused: false,
+  correction: '', error: '', paused: false, stuck: '',
 };
 
 export function liveReducer(state: LiveState, action: LiveAction): LiveState {
@@ -60,6 +64,8 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
       return {
         ...state, phase: 'waiting', instruction: action.current.instruction,
         step: action.current.step, claimId: null, askedBy: null, error: '',
+        // A new step is a fresh start: whatever was stuck was about the old one.
+        stuck: '',
       };
     case 'preparing':
       // The step stays on screen until the next instruction replaces it, so the
@@ -69,6 +75,8 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
       return {
         ...state, phase: 'asking', claimId: action.claimId, askedBy: 'user', correction: '',
       };
+    case 'stuck':
+      return { ...state, stuck: action.reason };
     case 'observer_ask':
       // Middle-band evidence: ask once, with one tap, and never advance on it.
       if (state.phase !== 'waiting' || state.paused) return state;
@@ -100,6 +108,15 @@ export function islandStateFor(state: LiveState): IslandState {
   return 'watching';
 }
 
+/** How the session's own reason reads to the person waiting on it. */
+export function stuckMessage(reason: string): string {
+  if (reason.startsWith('anomaly:')) {
+    return 'What Guider can see no longer matches this plan.';
+  }
+  if (reason === 'repeated_attempts') return 'This step is not working out.';
+  return 'This is taking longer than the plan expected.';
+}
+
 /** Events that mean the current step may have changed. Anything else is history. */
 const REFRESH_ON = new Set([
   'instruction.ready', 'plan.steps_exhausted', 'step.awaiting_action', 'session.blocked',
@@ -118,6 +135,9 @@ export interface LiveGuide {
   skip: () => Promise<void>;
   /** An observer verdict in the middle band: worth one question, nothing more. */
   observerAsked: () => void;
+  /** Ask for a replacement plan for whatever is left. Resolves with the
+   *  operation to follow, or null when there is nothing to replan. */
+  replan: () => Promise<string | null>;
   togglePause: () => void;
   close: () => void;
 }
@@ -163,6 +183,10 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
     void followEvents({
       fetchPage: (after, signal) => api.events(id, after, LONG_POLL_MS, signal),
       onEvents: events => {
+        const stuck = events.filter(event => event.type === 'session.stuck_detected').at(-1);
+        if (stuck) {
+          dispatch({ type: 'stuck', reason: String(stuck.payload.reason ?? '') });
+        }
         if (events.some(event => event.type === 'plan.steps_exhausted')) {
           // Every step has been dealt with. Nothing here claims they passed.
           dispatch({ type: 'finished' });
@@ -237,6 +261,25 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   const observerAsked = useCallback(() => dispatch({ type: 'observer_ask' }), []);
 
+  const replan = useCallback(async (): Promise<string | null> => {
+    const session = current.current;
+    if (!session) return null;
+    try {
+      const pending = await api.replan(session, state.stuck.startsWith('anomaly:')
+        ? 'anomaly' : state.stuck ? 'stuck' : 'user');
+      current.current = pending.session;
+      // The guide stops following the old plan here: what comes back is a draft
+      // the user reviews before anything continues.
+      following.current?.abort();
+      following.current = null;
+      dispatch({ type: 'preparing' });
+      return pending.operation_id;
+    } catch (error) {
+      fail(error);
+      return null;
+    }
+  }, [api, fail, state.stuck]);
+
   const awaitingAction = useCallback(
     () => state.phase === 'waiting' && !state.paused && state.step !== null,
     [state.phase, state.paused, state.step],
@@ -255,6 +298,6 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   return {
     state, session: current.current, awaitingAction,
-    start, claim, answer, skip, observerAsked, togglePause, close,
+    start, claim, answer, skip, observerAsked, replan, togglePause, close,
   };
 }

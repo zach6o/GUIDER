@@ -9,7 +9,7 @@ import { prepareImage } from './image';
 import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, pipSupported, type FloatingWindow } from './overlay/pip';
 import type { IslandState } from './overlay/states';
-import { islandStateFor, useLiveGuide } from './guide/live';
+import { islandStateFor, stuckMessage, useLiveGuide } from './guide/live';
 import { Watcher } from './guide/watching';
 import { createFrameSource, type MaskArea } from './overlay/frameSource';
 import { WatchSetup } from './overlay/WatchSetup';
@@ -214,6 +214,39 @@ export default function App() {
     setWatchNotice('');
   }
 
+  /**
+   * Ask for a replacement plan and show it for review. The guide stops here on
+   * purpose: what comes back is a draft, and nothing continues until the user
+   * has confirmed it.
+   */
+  async function askForNewPlan() {
+    const operationId = await live.replan();
+    if (!operationId) return;
+    void stopWatching('Watching stopped while the plan is rewritten.');
+    setGuiding(false);
+    live.close();
+    const token = ++generation.current;
+    await work('Working out what is left…', async () => {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (!isDemo) await new Promise(resolve => setTimeout(resolve, 2000));
+        if (generation.current !== token) return;
+        const operation = await api.operation(operationId);
+        if (generation.current !== token) return;
+        if (operation.status === 'succeeded' && operation.result_id) {
+          setPlan(await api.plan(operation.result_id));
+          setSession(await api.session(live.session!.id));
+          setOpenStep(''); setPage('plan');
+          setNotice('Here is a new plan for what is left. What you have already done is kept.');
+          return;
+        }
+        if (['failed', 'canceled'].includes(operation.status)) {
+          throw new Error(operation.error?.message || 'A new plan could not be prepared.');
+        }
+      }
+      throw new Error('Preparing the plan is taking too long. Try again in a moment.');
+    });
+  }
+
   function stopGuiding() {
     void stopWatching('Watching stopped with the guide.');
     live.close();
@@ -360,6 +393,8 @@ export default function App() {
       correction={live.state.error || live.state.correction}
       paused={live.state.paused}
       observerAsked={live.state.askedBy === 'observer'}
+      stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
+      onReplan={() => void askForNewPlan()}
       framesObserved={framesObserved}
       watchNotice={watchNotice}
       mount={floating?.mount ?? null}

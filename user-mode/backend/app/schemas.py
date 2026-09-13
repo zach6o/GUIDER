@@ -229,6 +229,18 @@ class Skipped(Schema):
     next_operation_id: UUID | None = None
 
 
+class ReplanRequest(Schema):
+    """Ask for a replacement roadmap for whatever is left.
+
+    The reason recorded here is the user's; the planner is given what the session
+    actually recorded — the stuck reason and any observed anomaly — rather than
+    a claim typed by a client.
+    """
+
+    expected_version: Annotated[int, Field(ge=1)]
+    reason: Literal["stuck", "anomaly", "user"] = "user"
+
+
 class VerifyRequest(Schema):
     """Doc 07's verification route needs evidence or an explicit self-report.
     Only the self-report arm exists today: objective checking arrives with the

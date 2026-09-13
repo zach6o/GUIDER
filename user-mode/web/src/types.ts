@@ -100,6 +100,7 @@ export interface GuideApi {
   selfReport(session: Session, stepId: string, claimId: string, said: string): Promise<SelfReported>;
   skipStep(session: Session, stepId: string, reason: 'not_applicable' | 'already_done' | 'cannot_do'): Promise<Skipped>;
   events(id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<GuideEventPage>;
+  replan(session: Session, reason: 'stuck' | 'anomaly' | 'user'): Promise<{ operation_id: string; session: Session }>;
   startWatching(session: Session, consentVersion: string): Promise<ObservationState>;
   stopWatching(id: string): Promise<ObservationState>;
   observe(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ObservationTick>;

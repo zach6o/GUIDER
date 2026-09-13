@@ -306,14 +306,17 @@
             "title": "Api Key",
             "writeOnly": true
           },
+          "provider": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Provider",
+            "default": ""
+          },
           "model": {
             "type": "string",
-            "enum": [
-              "gpt-4.1-mini",
-              "gpt-4.1"
-            ],
+            "maxLength": 80,
             "title": "Model",
-            "default": "gpt-4.1-mini"
+            "default": ""
           },
           "accepted_cloud_terms": {
             "type": "boolean",
@@ -327,7 +330,8 @@
           "api_key",
           "accepted_cloud_terms"
         ],
-        "title": "ConnectInput"
+        "title": "ConnectInput",
+        "description": "A key, and which service it belongs to. The model list is the adapter's,\nchecked by its capability descriptor rather than spelled out here."
       },
       "ConnectOutput": {
         "properties": {
@@ -335,12 +339,16 @@
             "type": "string",
             "title": "Connection Token"
           },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
           "model": {
             "type": "string",
-            "enum": [
-              "gpt-4.1-mini",
-              "gpt-4.1"
-            ],
             "title": "Model"
           },
           "expires_in_seconds": {
@@ -352,6 +360,8 @@
         "type": "object",
         "required": [
           "connection_token",
+          "provider",
+          "display_name",
           "model",
           "expires_in_seconds"
         ],

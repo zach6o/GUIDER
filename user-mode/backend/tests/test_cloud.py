@@ -7,10 +7,11 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.cloud import OpenAIVision
 from app.config import Settings
 from app.main import create_app
 from app.provider import python_fixture
+from app.providers.openai import OpenAIVision
+from app.providers.registry import OPENAI
 
 KEY = "sk-test-not-a-real-key-1234567890"
 ORIGIN = "http://127.0.0.1:5173"
@@ -54,7 +55,10 @@ async def cloud(tmp_path):
             },
         )
 
-    app.state.cloud_provider = OpenAIVision(httpx.MockTransport(provider))
+    # The connection stores which provider it belongs to and the registry builds
+    # the adapter per call, so a test swaps the registration rather than an
+    # instance hanging off app.state.
+    answer_with(app, provider)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://127.0.0.1:8000",
@@ -62,6 +66,17 @@ async def cloud(tmp_path):
     ) as client:
         yield app, client, calls
     await app.state.engine.dispose()
+
+
+def answer_with(app, handler):
+    """Point the `guide` role at a transport that answers however this test needs."""
+    app.state.providers.register(
+        OPENAI, lambda: OpenAIVision(httpx.MockTransport(handler))
+    )
+
+
+def answer_with_adapter(app, adapter):
+    app.state.providers.register(OPENAI, lambda: adapter)
 
 
 async def connect(client):
@@ -170,7 +185,9 @@ async def test_cancel_discards_in_flight_result(cloud):
         entered.set()
         await asyncio.sleep(60)
 
-    app.state.cloud_provider.analyze = delayed
+    stalled = OpenAIVision()
+    stalled.analyze = delayed
+    answer_with_adapter(app, stalled)
     checking = asyncio.create_task(client.post(PREFIX + "/checks", json=frame(), headers=headers))
     await asyncio.wait_for(entered.wait(), 5)
     assert (await client.post(PREFIX + "/checks", json=frame(), headers=headers)).status_code == 409
@@ -182,8 +199,7 @@ async def test_cancel_discards_in_flight_result(cloud):
 
 async def test_provider_error_does_not_echo_secret(cloud):
     app, client, _ = cloud
-    app.state.cloud_provider = OpenAIVision(
-        httpx.MockTransport(
+    answer_with(app, (
             lambda _: httpx.Response(
                 401,
                 json={"error": {"message": "Incorrect API key: " + KEY}},
@@ -206,8 +222,7 @@ async def test_provider_error_does_not_echo_secret(cloud):
 async def test_blocked_output_has_no_action(cloud, next_step):
     app, client, _ = cloud
     headers = await connect(client)
-    app.state.cloud_provider = OpenAIVision(
-        httpx.MockTransport(
+    answer_with(app, (
             lambda _: httpx.Response(
                 200,
                 json={

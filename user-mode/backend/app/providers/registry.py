@@ -6,12 +6,19 @@ provider stays a one-file change (ADR-017).
 """
 
 from collections.abc import Callable
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
 from app.errors import GuideError
+from app.providers.anthropic import MODELS as CLAUDE_MODELS
+from app.providers.anthropic import AnthropicClaude
 from app.providers.base import CapabilityDescriptor, Role
 from app.providers.fixture import FixtureProvider
+from app.providers.openai import MODELS as OPENAI_MODELS
 from app.providers.openai import OpenAIVision
+
+if TYPE_CHECKING:  # a registry that imported Settings at runtime would invert
+    from app.config import Settings  # the dependency between config and providers
 
 FIXTURE = CapabilityDescriptor(
     id="fixture",
@@ -35,6 +42,23 @@ OPENAI = CapabilityDescriptor(
     cost_tier="standard",
     byok_only=True,
     local=False,
+    models=OPENAI_MODELS,
+    default_model=OPENAI_MODELS[0],
+)
+
+
+ANTHROPIC = CapabilityDescriptor(
+    id="anthropic",
+    display_name="Claude",
+    roles=frozenset({"guide", "observe", "plan", "instruct"}),
+    vision=True,
+    structured_output="native",
+    max_image_px=2560,
+    cost_tier="capable",
+    byok_only=False,
+    local=False,
+    models=CLAUDE_MODELS,
+    default_model=CLAUDE_MODELS[0],
 )
 
 
@@ -46,6 +70,28 @@ class ProviderRegistry:
         self, descriptor: CapabilityDescriptor, factory: Callable[..., Any]
     ) -> None:
         self._entries[descriptor.id] = (descriptor, factory)
+
+    def descriptor(self, provider_id: str, role: Role) -> CapabilityDescriptor:
+        """The capabilities of one adapter, for a caller that was handed an id it
+        did not choose - a stored connection, say. Unknown ids fail closed."""
+        entry = self._entries.get(provider_id)
+        if entry is None or not entry[0].supports(role):
+            raise GuideError(
+                503,
+                "dependency_unavailable",
+                "No provider is configured for this capability.",
+            )
+        return entry[0]
+
+    def first_for(self, role: Role) -> CapabilityDescriptor:
+        """The adapter a caller gets when it expresses no preference."""
+        for descriptor in self.for_role(role):
+            return descriptor
+        raise GuideError(
+            503,
+            "dependency_unavailable",
+            "No provider is configured for this capability.",
+        )
 
     def describe(self) -> list[CapabilityDescriptor]:
         return [descriptor for descriptor, _ in self._entries.values()]
@@ -76,11 +122,38 @@ class ProviderRegistry:
         )
 
 
-def default_registry() -> ProviderRegistry:
+def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
+    """Fixture first, always. A configured provider is registered after it, so
+    every role still resolves with no credentials and no network, and adding one
+    changes which adapter answers rather than whether anything does.
+
+    Ordering is the whole selection rule: `select` takes the first adapter that
+    satisfies the role, so the fixture keeps serving the engine roles until a
+    deployment deliberately prefers something else.
+    """
     registry = ProviderRegistry()
     registry.register(FIXTURE, FixtureProvider)
     registry.register(OPENAI, OpenAIVision)
+    if settings is not None and settings.provider_api_key is not None:
+        configured = {ANTHROPIC.id: AnthropicClaude}.get(settings.provider_id)
+        if configured is None:
+            raise GuideError(
+                503,
+                "dependency_unavailable",
+                "No provider is configured for this capability.",
+            )
+        descriptor = ANTHROPIC
+        registry.register(
+            descriptor,
+            partial(
+                configured,
+                api_key=settings.provider_api_key,
+                model=descriptor.model_or_default(settings.provider_model),
+            ),
+        )
     return registry
 
 
+# The credential-free default. `create_app` replaces it with one built from its
+# own Settings, so nothing here reads configuration at import time.
 registry = default_registry()

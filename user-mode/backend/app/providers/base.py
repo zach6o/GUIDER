@@ -148,9 +148,22 @@ class CapabilityDescriptor:
     cost_tier: CostTier
     byok_only: bool
     local: bool
+    # Model names live with the adapter that understands them, so nothing
+    # outside this package has to know one provider's names from another's.
+    models: tuple[str, ...] = ()
+    default_model: str = ""
 
     def supports(self, role: Role) -> bool:
         return role in self.roles
+
+    def model_or_default(self, model: str) -> str:
+        """The model to use, or a refusal that names neither provider nor model."""
+        chosen = model or self.default_model
+        if self.models and chosen not in self.models:
+            raise GuideError(
+                422, "model_unavailable", "That model is not available for this connection."
+            )
+        return chosen
 
 
 class AnalysisProvider(Protocol):
@@ -191,22 +204,26 @@ class LiveGuidanceProvider(Protocol):
     ) -> Guidance: ...
 
 
-def provider_error(status: int) -> GuideError:
+def provider_error(status: int, provider: str = "OpenAI") -> GuideError:
+    """One refusal shape for every adapter. The name is the provider's own, so a
+    message can say who refused without any caller branching on which one."""
     if status in {401, 403}:
         return GuideError(
-            401, "openai_key_rejected", "OpenAI rejected this key or its permissions."
+            401, "openai_key_rejected", f"{provider} rejected this key or its permissions."
         )
     if status == 429:
         return GuideError(
             429,
             "openai_limit",
-            "OpenAI's usage limit was reached. Check your API billing and limits.",
+            f"{provider}'s usage limit was reached. Check your API billing and limits.",
         )
     if status == 404:
         return GuideError(422, "model_unavailable", "This model is not available for your API key.")
+    # The codes keep their original spelling: the web client already branches on
+    # `openai_key_rejected`, and renaming a wire code is a contract change.
     return GuideError(
         503,
         "openai_unavailable",
-        "OpenAI could not complete this request. Try again.",
+        f"{provider} could not complete this request. Try again.",
         retryable=True,
     )

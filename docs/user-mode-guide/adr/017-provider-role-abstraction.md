@@ -43,3 +43,13 @@ Assume outbound HTTPS from the backend only, and that no provider is trusted to 
 | R18/R19/R22/R23 | F18/F19/F22; `GET /providers`, `POST /providers/connections`; UX09 | SEC-09/10/11/14; T18/T22/T23; v2 phase 0 and 4 |
 
 Master traceability: [17](../17-traceability-matrix.md).
+
+## Evidence
+
+A second adapter landed in PR-16 (`app/providers/anthropic.py`, four roles) and
+`tests/test_provider_matrix.py` holds the decision to its claim two ways: identical fixtures go
+through every adapter serving a role and must satisfy the same schema and the same guard, and the
+source of `app/` outside `app/providers/` is read and must name no provider at all. Adding that
+adapter required removing three leaks that predated it — an adapter imported by `app/cloud.py`, a
+provider-named default model on the connect route, and provider-named settings keys — which is the
+cost this decision exists to keep paying once rather than repeatedly.

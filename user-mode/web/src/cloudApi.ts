@@ -32,10 +32,11 @@ async function send<T>(path: string, token: string, init: RequestInit): Promise<
 }
 
 export const cloudApi = {
-  connect: (apiKey: string, model: string, signal: AbortSignal) => send<{
-    connection_token: string; model: string; expires_in_seconds: number;
+  connect: (apiKey: string, provider: string, model: string, signal: AbortSignal) => send<{
+    connection_token: string; provider: string; display_name: string;
+    model: string; expires_in_seconds: number;
   }>('/connection', '', { method: 'POST', signal,
-    body: JSON.stringify({ api_key: apiKey, model, accepted_cloud_terms: true }) }),
+    body: JSON.stringify({ api_key: apiKey, provider, model, accepted_cloud_terms: true }) }),
   disconnect: (token: string) => send<void>('/connection', token, { method: 'DELETE', keepalive: true }),
   cancel: (token: string) => send<void>('/cancel', token, { method: 'POST', body: '{}', keepalive: true }),
   async check(token: string, blob: Blob, goal: string, question: string, previousStep: string, signal: AbortSignal) {

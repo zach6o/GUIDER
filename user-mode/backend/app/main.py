@@ -18,7 +18,7 @@ from app.database import make_database
 from app.errors import GuideError
 from app.guide.observation import SessionGate
 from app.media import LocalPrivateStorage
-from app.providers.registry import registry
+from app.providers.registry import default_registry
 from app.worker import run_worker
 
 
@@ -49,6 +49,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.sessions = sessions
     app.state.verifier = SupabaseVerifier(settings.supabase_url)
     app.state.storage = LocalPrivateStorage(settings.storage_path)
+    # Built from this app's own settings, so a configured provider is registered
+    # for this process only. Selection stays by role and capability.
+    registry = default_registry(settings)
     app.state.providers = registry
     # Selected by role, never by name: adding a provider does not touch this file.
     app.state.provider = registry.select("analyze")
@@ -56,7 +59,6 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.observation = SessionGate()
     app.state.worker_healthy = True
     app.state.cloud_connections = Connections()
-    app.state.cloud_provider = registry.select("guide")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,

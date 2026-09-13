@@ -51,8 +51,29 @@ test('saying the step did not happen keeps the guide on that step', async ({ pag
   await page.getByRole('button', { name: 'Not yet' }).click();
 
   await expect(count(page)).toHaveText('Step 1 of 3');
-  await expect(page.getByText('That is not done yet.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Still on this step.', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'I’ve done this' })).toBeVisible();
+});
+
+test('the island shows the instruction the session published, not a local script', async ({ page }) => {
+  await confirmedPlan(page);
+  await page.getByRole('button', { name: 'Start the steps' }).click();
+
+  // `where` exists only on a published Instruction: seeing it proves the island
+  // is rendering what the engine sent rather than the plan it already had.
+  await expect(island(page).locator('.island-where')).toBeVisible();
+  await expect(count(page)).toHaveText('Step 1 of 3');
+
+  // A claim is sent to the session and changes nothing about progress.
+  await page.getByRole('button', { name: 'I’ve done this' }).click();
+  await expect(count(page)).toHaveText('Step 1 of 3');
+  await expect(page.getByText('Nothing has been checked on screen.', { exact: false }))
+    .toBeVisible();
+
+  // Only the self-report moves the guide, and it still claims nothing.
+  await page.getByRole('button', { name: 'Yes, that happened' }).click();
+  await expect(count(page)).toHaveText('Step 2 of 3');
+  await expect(island(page).locator('.island-where')).toBeVisible();
 });
 
 test('every state is announced in words and a glyph, not only in colour', async ({ page }) => {

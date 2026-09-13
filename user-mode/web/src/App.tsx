@@ -9,7 +9,7 @@ import { prepareImage } from './image';
 import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, pipSupported, type FloatingWindow } from './overlay/pip';
 import type { IslandState } from './overlay/states';
-import { guideReducer, initialGuideState } from './guide/engine';
+import { islandStateFor, useLiveGuide } from './guide/live';
 import type { Analysis, Category, Plan, Screenshot, Session, Task } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -34,7 +34,6 @@ export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [openStep, setOpenStep] = useState('');
-  const [guide, setGuide] = useState(initialGuideState);
   const [guiding, setGuiding] = useState(false);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -159,29 +158,30 @@ export default function App() {
       throw new Error('Preparing the plan is taking too long. Try again in a moment.');
     });
   }
-  const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block')
-    .map(step => ({ id: step.id, target: step.title }));
-  // Finished means no current step: the island reports the outcome, not a step.
-  const activeStep = guide.phase === 'complete'
-    ? null : plan?.steps.find(step => step.id === guideSteps[guide.step]?.id) ?? null;
-  const islandState: IslandState = guide.phase === 'complete' ? 'finished'
-    : guide.paused ? 'idle' : guide.phase === 'checking' ? 'attention' : 'watching';
+  // The island runs the session on the server: the step it shows is the one the
+  // Guide Engine published an instruction for, and it advances only when a route
+  // accepts a claim and a self-report.
+  const live = useLiveGuide(api, session);
+  const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block');
+  const activeStep = live.state.step;
+  const islandState: IslandState = islandStateFor(live.state);
 
-  function guideDispatch(action: Parameters<typeof guideReducer>[2]) {
-    setGuide(current => guideReducer(guideSteps, current, action));
-  }
   function stopGuiding() {
+    live.close();
     setGuiding(false);
     setFloating((current: FloatingWindow | null) => { closeFloatingWindow(current); return null; });
   }
   async function startGuiding(floatingRequested = false) {
-    setGuide(initialGuideState);
     setGuiding(true);
     // The floating window is a deliberate choice, never the default: on the page
     // is a supported shape, and it is the only one Safari and Firefox have.
-    if (!floatingRequested) return;
-    // Must stay inside the click: the window will not open after an await.
-    setFloating(await openFloatingWindow(() => { setFloating(null); setGuiding(false); }));
+    if (floatingRequested) {
+      // Must stay inside the click: the window will not open after an await.
+      setFloating(await openFloatingWindow(() => {
+        setFloating(null); setGuiding(false); live.close();
+      }));
+    }
+    await live.start();
   }
   async function confirmPlan() {
     if (!plan || !session) return;
@@ -304,17 +304,17 @@ export default function App() {
     {guiding && plan && <GuideIsland
       state={islandState}
       step={activeStep}
-      ordinal={Math.min(guide.step + 1, guideSteps.length)}
+      instruction={live.state.instruction}
+      ordinal={activeStep?.ordinal ?? (live.state.phase === 'finished' ? guideSteps.length : 0)}
       total={guideSteps.length}
-      asking={guide.phase === 'checking'}
-      correction={guide.correction === 'missing_evidence'
-        ? 'That is not done yet. Try the step again, or skip it.' : ''}
-      paused={guide.paused}
+      asking={live.state.phase === 'asking'}
+      correction={live.state.error || live.state.correction}
+      paused={live.state.paused}
       mount={floating?.mount ?? null}
-      onClaim={() => guideDispatch({ type: 'act', target: activeStep?.id ?? '' })}
-      onAnswer={happened => guideDispatch({ type: 'verify', passed: happened })}
-      onTogglePause={() => guideDispatch({ type: guide.paused ? 'resume' : 'pause' })}
-      onSkip={() => { guideDispatch({ type: 'act', target: activeStep?.id ?? '' }); guideDispatch({ type: 'verify', passed: true }); }}
+      onClaim={() => void live.claim()}
+      onAnswer={happened => void live.answer(happened)}
+      onTogglePause={live.togglePause}
+      onSkip={() => void live.skip()}
       onClose={stopGuiding}
     />}
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />

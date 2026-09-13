@@ -6,6 +6,8 @@ export interface Task {
 export interface Session {
   id: string; task_id: string; state: string; state_version: number; control_epoch: number;
   observation_mode: 'screenshot_only' | 'window'; outcome: string | null;
+  current_step_id?: string | null; confirmed_plan_version?: number | null;
+  observation_active?: boolean; frames_observed?: number;
   created_at: string; expires_at: string;
 }
 export interface Screenshot {
@@ -19,7 +21,7 @@ export interface Analysis {
   explanation: string; needs_context: boolean; context_request: string | null;
 }
 export interface Operation {
-  id: string; kind?: 'analyze' | 'plan';
+  id: string; kind?: 'analyze' | 'plan' | 'instruct';
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   result: Analysis | null; result_id?: string | null; error: { message: string } | null;
 }
@@ -36,6 +38,34 @@ export interface Plan {
   status: 'draft' | 'confirmed' | 'superseded'; assumptions: string[];
   policy_version: string; confirmed_at: string | null; steps: Step[];
   created_at: string; updated_at: string;
+}
+export interface Instruction {
+  id: string; session_id: string; step_id: string; version: number;
+  status: 'ready' | 'superseded' | 'invalidated';
+  what: string; where: string; why: string | null;
+  confirmation_hint: string; cannot_find_hint: string; created_at: string;
+}
+export interface CurrentInstruction { instruction: Instruction; step: Step; session: Session }
+export interface Claimed { claim_id: string; step: Step; session: Session; verified: false }
+export interface Verification {
+  id: string; session_id: string; step_id: string; claim_id: string | null;
+  status: 'pending' | 'passed' | 'mismatch' | 'inconclusive' | 'user_reported' | 'canceled';
+  verifier_kind: 'visual' | 'text' | 'self_report';
+  reason: string; observed_confidence: number | null; evidence_available: boolean;
+  instruction_version: number; created_at: string;
+}
+/** A self-report never passes a step; `verified` is false by construction. */
+export interface SelfReported {
+  verification: Verification; step: Step; session: Session; verified: false;
+  next_operation_id: string | null;
+}
+export interface Skipped { step: Step; session: Session; next_operation_id: string | null }
+export interface GuideEventPage {
+  items: {
+    sequence: number; state_version: number; control_epoch: number;
+    type: string; payload: Record<string, unknown>; created_at: string;
+  }[];
+  next_after: number;
 }
 export interface Receipt { id: string; status: string; online_purge_due_at: string }
 export interface TaskInput { goal: string; category: Category; application_key: string }
@@ -54,4 +84,10 @@ export interface GuideApi {
   deleteImage(id: string): Promise<Receipt>;
   pause(id: string): Promise<Session>;
   stop(id: string): Promise<Session>;
+  start(session: Session): Promise<{ operation_id: string; session: Session }>;
+  instruction(id: string): Promise<CurrentInstruction | null>;
+  claim(session: Session, stepId: string, statement: string): Promise<Claimed>;
+  selfReport(session: Session, stepId: string, claimId: string, said: string): Promise<SelfReported>;
+  skipStep(session: Session, stepId: string, reason: 'not_applicable' | 'already_done' | 'cannot_do'): Promise<Skipped>;
+  events(id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<GuideEventPage>;
 }

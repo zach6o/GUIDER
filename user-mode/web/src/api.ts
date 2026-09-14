@@ -105,6 +105,11 @@ const remote: GuideApi = {
       throw error;
     }
   },
+  // Doc 05 makes this expensive on purpose: the pointer is withdrawn, watching
+  // is revoked and the session blocks. The island asks before calling it.
+  reportIncorrect: (session, stepId, text) => post(`/sessions/${session.id}/feedback`, {
+    expected_version: session.state_version, kind: 'incorrect_guidance', step_id: stepId, text,
+  }),
   replan: (session, reason) => post(`/sessions/${session.id}/replan`, {
     expected_version: session.state_version, reason,
   }),

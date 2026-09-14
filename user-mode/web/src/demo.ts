@@ -599,6 +599,33 @@ export const demoApi: GuideApi = {
       step: found.step, session: current, next_operation_id: instructOperation().id,
     });
   },
+  // Doc 05: the user calling guidance wrong withdraws the pointer, undoes any
+  // pass they contradicted, revokes watching and blocks the session. Nothing in
+  // this browser observes, so only the first, third and fourth ever apply here.
+  async reportIncorrect(session, stepId, text) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    const plan = confirmedPlanFor(current);
+    const step = plan.steps.find(item => item.id === stepId);
+    if (!step) throw new Error('Say which step the guidance was wrong about.');
+    const withdrawn = step.status === 'verified';
+    if (withdrawn) { step.status = 'pending'; step.verified_at = null; }
+    for (const existing of instructions.values()) {
+      if (existing.session_id === current.id && existing.status === 'ready') {
+        existing.status = 'invalidated';
+      }
+    }
+    current.current_step_id = null;
+    emit(current, 'feedback.recorded', {
+      feedback_id: uid(), kind: 'incorrect_guidance', step_id: stepId, text,
+    });
+    move(current, 'blocked', 'incorrect_guidance');
+    return clone({
+      feedback_id: uid(), session: current, step, verification_withdrawn: withdrawn,
+    });
+  },
   async replan(session, reason) {
     const current = requireItem(sessions, session.id);
     if (current.state_version !== session.state_version) {

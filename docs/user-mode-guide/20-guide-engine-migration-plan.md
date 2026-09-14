@@ -126,7 +126,7 @@ Each item is one pull request. Exit gates are additions to [16](16-testing-strat
 
 | Item | Why it matters | Needed by |
 |---|---|---|
-| False-positive advancement | The principal failure mode. Advancing past a step the user has not done is worse than asking. Instrument mismatch rate from PR 13 and calibrate the 0.85 threshold against real sessions (D05) | Phase 3 |
+| False-positive advancement | The principal failure mode. Advancing past a step the user has not done is worse than asking. **Instrumented** in PR-20: `POST /sessions/{id}/feedback` records the contradiction and `app/guide/calibration.py` reports advances, asks and contradictions per confidence band. Calibrating 0.85 against real sessions (D05) still needs sessions | Phase 3 |
 | Observation cost ceiling | Continuous observation has a real per-hour cost; a daily per-owner ceiling in account mode is a product decision | Phase 3 |
 | D01 per provider | Now a per-provider gate ([ADR-017](adr/017-provider-role-abstraction.md)). Blocks account mode; does not block BYOK | Phase 4 |
 | Picture-in-Picture absence | Unavailable on Safari and Firefox; fallbacks must be built and tested as first-class, not discovered late | Phase 2 |

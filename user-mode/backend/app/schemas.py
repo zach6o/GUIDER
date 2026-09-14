@@ -492,6 +492,27 @@ class StopRequest(Schema):
     reason: Literal["user", "close", "sign_out", "emergency"]
 
 
+class FeedbackRequest(Schema):
+    """Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05
+    has it invalidate the pointer, revoke observation and block the session, so
+    it names the step it is about."""
+
+    expected_version: Annotated[int, Field(ge=1)] | None = None
+    kind: Literal["incorrect_guidance", "helpful", "unhelpful", "privacy_concern"]
+    step_id: UUID | None = None
+    instruction_id: UUID | None = None
+    text: Annotated[str, Field(max_length=2000)] = ""
+
+
+class FeedbackRecorded(Schema):
+    feedback_id: UUID
+    session: Session
+    step: Step | None = None
+    #: True when the user contradicted a pass the observer reached on its own.
+    #: The step is `pending` again and nothing claims it was verified.
+    verification_withdrawn: bool = False
+
+
 class SessionItem(Schema):
     session: Session
     task_title: str

@@ -656,6 +656,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_FeedbackRecorded_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FeedbackRecorded"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[FeedbackRecorded]"
+      },
       "Envelope_ImportAccepted_": {
         "properties": {
           "data": {
@@ -1038,6 +1057,103 @@
           "next_after"
         ],
         "title": "EventPage"
+      },
+      "FeedbackRecorded": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Feedback Id"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Step"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_withdrawn": {
+            "type": "boolean",
+            "title": "Verification Withdrawn",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "session"
+        ],
+        "title": "FeedbackRecorded"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "incorrect_guidance",
+              "helpful",
+              "unhelpful",
+              "privacy_concern"
+            ],
+            "title": "Kind"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "instruction_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Text",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "FeedbackRequest",
+        "description": "Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05\nhas it invalidate the pointer, revoke observation and block the session, so\nit names the step it is about."
       },
       "Guidance": {
         "properties": {

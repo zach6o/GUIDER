@@ -13,6 +13,7 @@ from app import schemas as s
 from app.auth import Db, Owner
 from app.errors import GuideError, not_found
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
+from app.guide.feedback import record as record_feedback
 from app.guide.guard import vet_observation
 from app.guide.observation import (
     MAX_OBSERVATION_CALLS,
@@ -610,6 +611,65 @@ async def verify_step(
 # a transport swap later without changing this contract.
 MAX_WAIT_MS = 30_000
 POLL_INTERVAL_SECONDS = 0.4
+
+
+@router.post(
+    "/sessions/{session_id}/feedback",
+    status_code=201,
+    response_model=s.Envelope[s.FeedbackRecorded],
+)
+async def feedback(
+    session_id: UUID,
+    body: s.FeedbackRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Doc 07's feedback route, with doc 05's consequences for one of its kinds.
+
+    `incorrect_guidance` is the only signal Guider ever gets that a verdict it
+    reached on its own was wrong, so it is worth the cost doc 05 attaches to it:
+    the pointer is withdrawn, a pass the user contradicts is downgraded to a
+    mismatch, watching is switched off, and the session blocks until the user
+    resumes with fresh context. The other kinds are opinions and change nothing.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if body.kind == "incorrect_guidance" and session.state in TERMINAL:
+        raise GuideError(409, "invalid_transition", "This task has already ended.")
+    step = None
+    if body.step_id is not None:
+        step = await owned_step(db, session, str(body.step_id))
+    if body.kind == "incorrect_guidance" and step is None:
+        # Blocking a session and withdrawing a pointer needs to name what was
+        # wrong; without a step there is nothing to withdraw and nothing to learn.
+        raise GuideError(
+            422, "validation_failed", "Say which step the guidance was wrong about."
+        )
+    if body.kind == "incorrect_guidance":
+        await cancel_pending(db, session)
+    recorded = await record_feedback(
+        db,
+        session,
+        step,
+        body.kind,
+        body.text.strip(),
+        str(body.instruction_id) if body.instruction_id else None,
+        request.state.request_id,
+    )
+    result = s.FeedbackRecorded(
+        feedback_id=recorded.id,
+        session=s.Session.model_validate(session),
+        step=step_view(step) if step else None,
+        verification_withdrawn=recorded.verification_id is not None,
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 201)
+    return envelope(request, result)
 
 
 @router.get("/sessions/{session_id}/events", response_model=s.Envelope[s.EventPage])

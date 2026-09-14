@@ -326,6 +326,45 @@ class SessionSummary(Owned, Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
+FEEDBACK_KINDS = ("incorrect_guidance", "helpful", "unhelpful", "privacy_concern")
+FEEDBACK_STATUSES = ("received", "reviewed", "resolved")
+
+
+class UserFeedback(Owned, Base):
+    """What the user thought of a step, and — for `incorrect_guidance` — the only
+    ground truth Guider ever gets about a verdict it reached on its own.
+
+    Doc 05 makes this kind expensive on purpose: it invalidates the pointer,
+    revokes observation and blocks the session. That cost is why the row is worth
+    trusting when [D05](../../../docs/user-mode-guide/README.md) calibration reads
+    it back. No frame is kept, so this and the tick event are all the evidence
+    there is that an advance was wrong.
+    """
+
+    __tablename__ = "user_feedback"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"kind IN {FEEDBACK_KINDS}", name="user_feedback_kind"),
+        CheckConstraint(f"status IN {FEEDBACK_STATUSES}", name="user_feedback_status"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    instruction_id: Mapped[str | None] = mapped_column(String(36))
+    kind: Mapped[str] = mapped_column(index=True)
+    text: Mapped[str] = mapped_column(String(2000), default="")
+    status: Mapped[str] = mapped_column(default="received")
+    # What the session believed when the user disagreed. Kept on the row because
+    # the verification it contradicts may be purged before the feedback is read.
+    verification_id: Mapped[str | None] = mapped_column(String(36))
+    observed_confidence: Mapped[float | None]
+    control_epoch: Mapped[int] = mapped_column(BigInteger, default=1)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
 IMPORT_SOURCES = ("chatgpt", "claude", "gemini", "other")
 
 

@@ -330,6 +330,15 @@ export default function App() {
     });
   }
 
+  async function reportIncorrect(said: string) {
+    // The server switches watching off as part of blocking the session; the
+    // browser has to stop its own loop, or it would keep encoding frames for a
+    // session that will refuse them.
+    void stopWatching('Watching stopped: you said the guidance was wrong.');
+    await live.reportIncorrect(said);
+    setSession(live.session);
+  }
+
   function stopGuiding() {
     void stopWatching('Watching stopped with the guide.');
     live.close();
@@ -522,6 +531,8 @@ export default function App() {
       paused={live.state.paused}
       observerAsked={live.state.askedBy === 'observer'}
       stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
+      blocked={live.state.blocked}
+      onReportIncorrect={said => void reportIncorrect(said)}
       onReplan={() => void askForNewPlan()}
       onFinish={() => void finishTask()}
       framesObserved={framesObserved}

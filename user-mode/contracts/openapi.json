@@ -2114,6 +2114,172 @@
         }
       }
     },
+    "/api/v1/guide/sessions/{session_id}/feedback": {
+      "post": {
+        "summary": "Feedback",
+        "description": "Doc 07's feedback route, with doc 05's consequences for one of its kinds.\n\n`incorrect_guidance` is the only signal Guider ever gets that a verdict it\nreached on its own was wrong, so it is worth the cost doc 05 attaches to it:\nthe pointer is withdrawn, a pass the user contradicts is downgraded to a\nmismatch, watching is switched off, and the session blocks until the user\nresumes with fresh context. The other kinds are opinions and change nothing.",
+        "operationId": "feedback_api_v1_guide_sessions__session_id__feedback_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FeedbackRecorded_"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/guide/sessions/{session_id}/events": {
       "get": {
         "summary": "Events",
@@ -5290,6 +5456,25 @@
         ],
         "title": "Envelope[EventPage]"
       },
+      "Envelope_FeedbackRecorded_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FeedbackRecorded"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[FeedbackRecorded]"
+      },
       "Envelope_ImportAccepted_": {
         "properties": {
           "data": {
@@ -5672,6 +5857,103 @@
           "next_after"
         ],
         "title": "EventPage"
+      },
+      "FeedbackRecorded": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Feedback Id"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Step"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_withdrawn": {
+            "type": "boolean",
+            "title": "Verification Withdrawn",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "session"
+        ],
+        "title": "FeedbackRecorded"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "incorrect_guidance",
+              "helpful",
+              "unhelpful",
+              "privacy_concern"
+            ],
+            "title": "Kind"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "instruction_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Text",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "FeedbackRequest",
+        "description": "Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05\nhas it invalidate the pointer, revoke observation and block the session, so\nit names the step it is about."
       },
       "Guidance": {
         "properties": {

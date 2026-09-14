@@ -85,6 +85,9 @@ async def current_user(
     if credentials is None:
         raise GuideError(401, "invalid_token", "Sign in to continue.")
     identity = await request.app.state.verifier.verify(credentials.credentials)
+    # When this token was issued, for routes that require a recent sign-in rather
+    # than merely a valid one. Account deletion is the only such route today.
+    request.state.identity_issued_at = identity.issued_at
     insert = sqlite_insert if db.bind.dialect.name == "sqlite" else pg_insert
     await db.execute(
         insert(User).values(id=identity.id).on_conflict_do_nothing(index_elements=["id"])

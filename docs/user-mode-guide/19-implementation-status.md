@@ -1,5 +1,43 @@
 # 19 · Implementation status and session handoff
 
+## Deletion, at last: 2026-09-14 · V2.0
+
+The only thing a user could delete was a screenshot. The goal they typed, the transcript they
+pasted, the record of what they were guided through, the account itself — none of it had a way out,
+while [09](09-security-and-privacy.md) SEC-13 required exact deletion semantics and doc 07 had
+specified all three routes from the beginning. [22](22-guider-v2-architecture.md) makes closing this
+the first phase of V2, before anything is built that would give the product more to remember.
+
+`DELETE /sessions/{id}` stops the session first, then removes every row under it — instructions,
+claims, verifications, summaries, feedback, imports, plans, steps, operations, events and images,
+bytes before rows — and leaves the task standing, because removing one attempt is not asking to
+forget the goal. `DELETE /tasks/{id}` takes the task, every session under it and its task-level
+images. `DELETE /account` takes all of that and the owner's idempotency records, sets
+`auth_revoked_before` to now so every token issued before the request stops being accepted, and
+leaves the receipt readable — doc 08 keeps it until the Supabase identity itself is removed, which
+is a separate audited step this route does not perform.
+
+Account deletion requires the exact header phrase doc 07 specifies, typed by the user, and a sign-in
+from within the last five minutes. `auth.py` now records when the presented token was issued, which
+is what makes that check real rather than decorative.
+
+`app/erasure.py` names every table in dependency order rather than relying on cascades — only five
+foreign keys in the schema cascade, and deleting a parent while hoping is how orphans are made. The
+test that matters most reads the schema at runtime and fails when a table exists that the erasure
+module never names, with an explicit exempt list of three: the identity row, the receipt, and
+Alembic's own bookkeeping. A table added without being erased is a privacy leak no ordinary test
+would catch, because a test only checks the tables it knows about.
+
+Deleting twice produces no second receipt. Another owner's rows are untouched — the property with
+its own test, because it is the one that would matter most if it were wrong.
+
+On screen: a delete control on each history row, a dialog that names what goes with the task before
+anything happens, and a danger zone on the privacy page where the confirmation phrase is typed. The
+privacy page no longer says task and account erasure are on the roadmap, because they are not.
+
+Current verification: 359 backend tests pass and 12 skip on SQLite, 120 web unit tests pass, and 53
+browser scenarios pass in installed Chrome.
+
 ## A way back from blocked: 2026-09-14
 
 A guide could be stopped four ways — pause, the safety guard, a failed

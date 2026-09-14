@@ -67,6 +67,8 @@ export default function App() {
   const [signedIn, setSignedIn] = useState(isDemo);
   const [authOpen, setAuthOpen] = useState(false);
   const [surface, setSurface] = useState<GuideSurface>(defaultSurface);
+  const [confirmDelete, setConfirmDelete] = useState<HistoryItem | null>(null);
+  const [deletePhrase, setDeletePhrase] = useState('');
   const [mirroring, setMirroring] = useState(false);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -351,6 +353,34 @@ export default function App() {
     setSession(live.session);
   }
 
+  async function deleteTask(item: HistoryItem) {
+    await work('Deleting…', async () => {
+      const receipt = await api.deleteTask(item.session.task_id);
+      setConfirmDelete(null);
+      if (task?.id === item.session.task_id) {
+        // The open task was the one deleted. Clear it without leaving the page:
+        // the user asked to delete one row, not to be sent somewhere else.
+        generation.current++;
+        setTask(null); setSession(null); setPlan(null); setSummary(null);
+        setScreenshot(null); setAnalysis(null); setDraft(null); setImageUrl('');
+        setGuiding(false); live.close();
+      }
+      setHistory(current => current.filter(row => row.session.task_id !== item.session.task_id));
+      setNotice(`Deleted. Receipt ${receipt.id.slice(0, 8)} — nothing of that task is left.`);
+    });
+  }
+
+  async function deleteAccount() {
+    await work('Deleting your account…', async () => {
+      const receipt = await api.deleteAccount();
+      setDeletePhrase('');
+      reset(); setHistory([]);
+      await supabase?.auth.signOut();
+      setSignedIn(false);
+      setNotice(`Your account is deleted. Receipt ${receipt.id.slice(0, 8)}.`);
+    });
+  }
+
   async function resumeGuide() {
     await live.resumeGuide();
     setSession(live.session);
@@ -586,8 +616,17 @@ export default function App() {
           <div className="plan-buttons"><button className="text-button" onClick={() => navigate('history')}>See your tasks</button><button className="primary" onClick={reset}>Start something new <ArrowRight size={17} /></button></div>
         </div>}
 
-        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <button disabled={!!busy} key={item.session.id} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
-        {page === 'privacy' && <div className="simple-page"><span className="eyebrow">ALWAYS YOUR CALL</span><h1>A guide. On your terms.</h1><p className="muted">You choose the context. You take the actions.</p><div className="privacy-sections"><article><EyeOff size={23} /><div><h2>Observation is off.</h2><p>Live screen guide can preview a window or tab you choose. It sends only frames you review and submit to OpenAI. Sharing stops when you leave that view or hide Guider. There is no microphone, recording, typing, or clicking.</p></div></article><article><ShieldCheck size={23} /><div><h2>{isDemo ? 'This demo stays in your tab.' : 'Screenshots are private.'}</h2><p>{isDemo ? 'Your task and image live in browser memory. They are not sent to the API or an AI provider, and they disappear when you refresh or close this tab.' : 'Images go to your configured Guider development backend, expire within 24 hours, and can be deleted with their analysis. The local development storage is not approved for real customer media.'}</p></div></article><article><ScanLine size={23} /><div><h2>OpenAI when you connect.</h2><p>Live screen guide uses your OpenAI API key for actual visual guidance. You review each outgoing frame. The original screenshot demo still uses a fixed example. Cloud keys are kept only in local backend memory and cleared on disconnect or expiry.</p></div></article><article><Trash2 size={23} /><div><h2>Delete what you share.</h2><p>Use the trash button beside an uploaded screenshot to remove its pixels and associated explanation. Task and account erasure controls are still on the implementation roadmap.</p></div></article></div></div>}
+        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-row" key={item.session.id}>
+          <button disabled={!!busy} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>
+          <button className="icon-button history-delete" disabled={!!busy} aria-label={`Delete the task ${item.task_title}`} onClick={() => setConfirmDelete(item)}><Trash2 size={16} /></button>
+        </div>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
+        {page === 'privacy' && <div className="simple-page"><span className="eyebrow">ALWAYS YOUR CALL</span><h1>A guide. On your terms.</h1><p className="muted">You choose the context. You take the actions.</p><div className="privacy-sections"><article><EyeOff size={23} /><div><h2>Observation is off.</h2><p>Live screen guide can preview a window or tab you choose. It sends only frames you review and submit to OpenAI. Sharing stops when you leave that view or hide Guider. There is no microphone, recording, typing, or clicking.</p></div></article><article><ShieldCheck size={23} /><div><h2>{isDemo ? 'This demo stays in your tab.' : 'Screenshots are private.'}</h2><p>{isDemo ? 'Your task and image live in browser memory. They are not sent to the API or an AI provider, and they disappear when you refresh or close this tab.' : 'Images go to your configured Guider development backend, expire within 24 hours, and can be deleted with their analysis. The local development storage is not approved for real customer media.'}</p></div></article><article><ScanLine size={23} /><div><h2>OpenAI when you connect.</h2><p>Live screen guide uses your OpenAI API key for actual visual guidance. You review each outgoing frame. The original screenshot demo still uses a fixed example. Cloud keys are kept only in local backend memory and cleared on disconnect or expiry.</p></div></article><article><Trash2 size={23} /><div><h2>Delete what you share.</h2><p>Remove a screenshot with the trash button beside it. Delete a whole task from your history — that takes every session, plan, step and image under it. Deleting your account removes all of it at once and stops every signed-in device immediately.</p>
+          {!isDemo && <div className="danger-zone">
+            <label htmlFor="delete-phrase">Type <code>delete-my-guide-account</code> to confirm</label>
+            <input id="delete-phrase" value={deletePhrase} onChange={event => setDeletePhrase(event.target.value)} placeholder="delete-my-guide-account" autoComplete="off" spellCheck={false} />
+            <button className="danger" disabled={!!busy || deletePhrase !== 'delete-my-guide-account'} onClick={() => void deleteAccount()}><Trash2 size={15} /> Delete my account and everything in it</button>
+            <small>This cannot be undone. You will be signed out and your receipt is shown once.</small>
+          </div>}</div></article></div></div>}
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
     </div>
@@ -633,6 +672,16 @@ export default function App() {
       onSkip={() => void live.skip()}
       onClose={stopGuiding}
     />}
+    {confirmDelete && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+      <div className="confirm-card">
+        <h2 id="delete-title">Delete “{confirmDelete.task_title}”?</h2>
+        <p>Every session, plan, step and image under this task goes with it. This cannot be undone.</p>
+        <div className="plan-buttons">
+          <button className="text-button" onClick={() => setConfirmDelete(null)}>Keep it</button>
+          <button className="danger" disabled={!!busy} onClick={() => void deleteTask(confirmDelete)}><Trash2 size={15} /> Delete the task</button>
+        </div>
+      </div>
+    </div>}
     {watchOpen && <WatchSetup
       chooseWindow={() => capture.current.start(reason => void stopWatching(reason))}
       onStart={beginWatching}

@@ -126,6 +126,9 @@ export interface GuideApi {
   confirmPlan(plan: Plan, session: Session): Promise<{ plan: Plan; session: Session }>;
   operation(id: string): Promise<Operation>;
   deleteImage(id: string): Promise<Receipt>;
+  deleteTask(id: string): Promise<Receipt>;
+  deleteSession(id: string): Promise<Receipt>;
+  deleteAccount(): Promise<Receipt>;
   pause(id: string): Promise<Session>;
   stop(id: string): Promise<Session>;
   start(session: Session): Promise<{ operation_id: string; session: Session }>;

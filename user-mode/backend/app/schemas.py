@@ -474,7 +474,7 @@ class Pending(Schema):
 
 class DeletionReceipt(Schema):
     id: UUID
-    scope: Literal["screenshot"]
+    scope: Literal["screenshot", "session", "task", "account"]
     status: Literal["queued", "purging", "purged", "failed"]
     requested_at: datetime
     online_purge_due_at: datetime

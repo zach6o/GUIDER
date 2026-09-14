@@ -24,7 +24,9 @@ test('synthetic screenshot journey, deletion, and responsive workspace', async (
   await expect(page.getByText('Image and its analysis have been deleted.')).toBeVisible();
   await expect(page.locator('.evidence-marker')).toHaveCount(0);
   await page.getByRole('button', { name: 'Task history', exact: true }).click();
-  await expect(page.getByRole('button', { name: /Why won't my Python file run/ })).toBeVisible();
+  // The row itself, not the delete control beside it that carries the same title.
+  await expect(page.locator('.history-row > button').first())
+    .toContainText("Why won't my Python file run?");
   await page.getByRole('button', { name: 'Guider home' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: 'test-results/home-mobile.png', fullPage: true, animations: 'disabled' });

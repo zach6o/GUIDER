@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app import models as m
 from app import schemas as s
 from app.auth import Db, Owner
+from app.erasure import erase_account, erase_session, erase_task, receipt_for
 from app.errors import GuideError, not_found
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.feedback import record as record_feedback
@@ -1090,6 +1091,82 @@ async def delete_image(screenshot_id: UUID, request: Request, db: Db, owner: Own
             request.state.request_id,
         ),
     )
+
+
+@router.delete(
+    "/sessions/{session_id}", status_code=202, response_model=s.Envelope[s.DeletionReceipt]
+)
+async def delete_session(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """Delete one attempt, and keep the goal.
+
+    Doc 07 is explicit that the task survives: a user removing one run has not
+    asked to forget what they were trying to do. The session is stopped before
+    anything is removed, so no client is left pointing at a step that no longer
+    exists.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    job = await receipt_for(db, owner.id, "session", session.id)
+    if job.status != "purged":
+        await erase_session(db, request.app.state.storage, session, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
+
+
+@router.delete("/tasks/{task_id}", status_code=202, response_model=s.Envelope[s.DeletionReceipt])
+async def delete_task(task_id: UUID, request: Request, db: Db, owner: Owner):
+    """Delete a task and everything under it: every session, plan, step,
+    instruction, claim, verification, summary, import and image."""
+    task = await owned(db, m.GuideTask, str(task_id), owner.id)
+    job = await receipt_for(db, owner.id, "task", task.id)
+    if job.status != "purged":
+        await erase_task(db, request.app.state.storage, task, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
+
+
+# Doc 07 requires this exact header, typed by hand, plus a recent sign-in. An
+# account deletion that could happen by a misrouted request would not be a
+# deletion control, it would be a hazard.
+CONFIRM_DELETION = "delete-my-guide-account"
+RECENT_AUTH = timedelta(minutes=5)
+
+
+@router.delete("/account", status_code=202, response_model=s.Envelope[s.DeletionReceipt])
+async def delete_account(
+    request: Request,
+    db: Db,
+    owner: Owner,
+    confirm: Annotated[str, Header(alias="X-Confirm-Deletion")] = "",
+):
+    """Erase every trace of this account's Guide data.
+
+    The identity itself is removed separately, by an audited privileged step this
+    route does not perform (doc 08). What it does do is make the account unusable
+    immediately: every token issued before this moment stops being accepted, so
+    there is no window in which a deleted account still works.
+    """
+    if confirm != CONFIRM_DELETION:
+        raise GuideError(
+            422,
+            "validation_failed",
+            "Type the confirmation phrase exactly to delete your account.",
+            details={"expected": CONFIRM_DELETION},
+        )
+    identity = getattr(request.state, "identity_issued_at", None)
+    if identity is not None and m.now() - identity > RECENT_AUTH:
+        raise GuideError(
+            403,
+            "recent_auth_required",
+            "Sign in again before deleting your account.",
+        )
+    job = await receipt_for(db, owner.id, "account", owner.id)
+    if job.status != "purged":
+        await erase_account(db, request.app.state.storage, owner, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
 
 
 @router.get("/deletions/{deletion_id}", response_model=s.Envelope[s.DeletionReceipt])

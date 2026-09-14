@@ -1,5 +1,40 @@
 # 19 · Implementation status and session handoff
 
+## Racing the engine on PostgreSQL: 2026-09-14
+
+Doc 20 has said since the migration began that the row locks are no-ops on SQLite
+and the engine depends on them. One test held that line — two plan confirmations
+racing — which proved the lock exists and nothing about the paths a guide runs
+through.
+
+`tests/test_concurrency.py` races real routes against each other: claims against
+claims and ten at once, a claim against a skip, two self-reports of one claim, a
+self-report against an observer advance, a stop against a frame already in
+flight, two completions, and one idempotency key sent twice at the same moment.
+Each asserts the invariant rather than the winner, because which request wins is
+a scheduling detail: exactly one lands, the loser is refused rather than quietly
+applied, and no record describes two histories. Two more check that the event
+sequence stays gapless under concurrent writers — a client resumes at a cursor,
+so a duplicate or a gap is a missed instruction — and that the lock is per owner,
+so one user's guide never waits behind another's.
+
+They skip on SQLite rather than reporting green where `SELECT ... FOR UPDATE`
+does nothing, which is why the skip count moved from 2 to 12. CI runs the backend
+suite twice and the second run is where they count.
+
+One of them was wrong at first and said so loudly: both completions were refused
+because a session with open steps cannot be completed at all, which is a
+rejection and not a race. It now works the plan to its end before racing.
+
+What this does not cover is sustained load. These are pairs and one group of ten
+inside a single process; throughput, connection-pool exhaustion and lock waits
+under a real population remain unmeasured, and doc 07's performance budgets
+(T38) are still unexecuted.
+
+Current verification: 328 backend tests pass and 12 skip on SQLite, all 340 pass
+against PostgreSQL in CI, 116 web unit tests pass, and 48 browser scenarios pass
+in installed Chrome.
+
 ## Three surfaces, not one and two consolations: 2026-09-14
 
 ADR-016 calls side-by-side and mirrored preview first-class modes, and doc 20

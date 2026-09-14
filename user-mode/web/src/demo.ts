@@ -613,6 +613,15 @@ export const demoApi: GuideApi = {
       next_operation_id: instructOperation().id,
     });
   },
+  // The demo has no vision provider, so it refuses to check rather than
+  // inventing a verdict about a real screenshot. Saying so is the honest
+  // mirror of a backend that would look.
+  async checkEvidence() {
+    throw new Error(
+      'This demo cannot check a screenshot: it has no vision provider. '
+      + 'Tell Guider what happened instead, and it will be recorded as your word.',
+    );
+  },
   async skipStep(session, stepId, reason) {
     const current = requireItem(sessions, session.id);
     if (current.state_version !== session.state_version) {

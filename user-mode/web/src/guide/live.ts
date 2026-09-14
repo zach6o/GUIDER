@@ -140,6 +140,9 @@ export function stuckMessage(reason: string): string {
 /** Events that mean the current step may have changed. Anything else is history. */
 const REFRESH_ON = new Set([
   'instruction.ready', 'plan.steps_exhausted', 'step.awaiting_action', 'session.blocked',
+  // A checked screenshot either advanced the guide or handed the step back; both
+  // are visible only by re-reading what is current.
+  'verification.completed',
 ]);
 const LONG_POLL_MS = 25_000;
 
@@ -163,6 +166,9 @@ export interface LiveGuide {
   resumeGuide: () => Promise<void>;
   /** Ask for this step in different words. Not a claim, not a skip. */
   retry: (said: string) => Promise<void>;
+  /** Have a screenshot checked against this step. Unlike every other control
+   *  here, this one can actually produce a verified step. */
+  checkWith: (screenshotId: string) => Promise<void>;
   /** Ask for a replacement plan for whatever is left. Resolves with the
    *  operation to follow, or null when there is nothing to replan. */
   replan: () => Promise<string | null>;
@@ -339,6 +345,24 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
     dispatch({ type: 'preparing' });
   }), [act, api, state.step, state.paused]);
 
+  const checkWith = useCallback((screenshotId: string) => act(async () => {
+    let session = current.current;
+    const step = state.step;
+    if (!session || !step || state.paused) return;
+    let claimId = state.claimId;
+    if (!claimId) {
+      const claimed = await api.claim(session, step.id, 'Shared a screenshot to check.');
+      current.current = claimed.session;
+      session = claimed.session;
+      claimId = claimed.claim_id;
+    }
+    const pending = await api.checkEvidence(session, step.id, claimId, screenshotId);
+    current.current = pending.session;
+    // The answer arrives on the event stream: a pass publishes the next step, and
+    // anything else returns this one.
+    dispatch({ type: 'preparing' });
+  }), [act, api, state.step, state.claimId, state.paused]);
+
   const replan = useCallback(async (): Promise<string | null> => {
     const session = current.current;
     if (!session) return null;
@@ -376,7 +400,8 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   return {
     state, session: current.current, awaitingAction,
-    start, claim, answer, skip, observerAsked, reportIncorrect, resumeGuide, retry, replan,
+    start, claim, answer, skip, observerAsked, reportIncorrect, resumeGuide, retry, checkWith,
+    replan,
     togglePause, close,
   };
 }

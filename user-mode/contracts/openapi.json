@@ -2284,7 +2284,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Envelope_SelfReported_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope_SelfReported_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Envelope_Pending_"
+                    }
+                  ],
+                  "title": "Response Verify Step Api V1 Guide Sessions  Session Id  Steps  Step Id  Verifications Post"
                 }
               }
             }

@@ -1,5 +1,39 @@
 # 19 · Implementation status and session handoff
 
+## A step can finally be verified: 2026-09-14 · V2.0
+
+The product's central promise is *one verified step at a time*, and until today
+the only way to reach `verified` was to be watched live. `POST .../verifications`
+had one arm: the user's word, recorded honestly as `user_reported` and awarded no
+badge. A client that sent evidence was refused outright — which was honest, and
+left the promise half-built for anyone not sharing their screen.
+
+`app/guide/evidence.py` is the other arm. A screenshot the user shares is checked
+by the same observer role that judges a live frame, against the same bands: at
+0.85 and above with the criterion satisfied it is a **pass**, and the step becomes
+`verified` with its timestamp and the confidence that earned it; between 0.60 and
+0.85 it is **inconclusive** and advances nothing; below that, or with the
+criterion unsatisfied, it is a **mismatch** that counts an attempt and leaves the
+step current. One threshold table, two entry points, and `evidence_available` is
+the column that keeps a checked step distinguishable from a reported one forever.
+
+The check is a durable Operation rather than a request that blocks, because a
+provider call that outlives the request is what Operations are for. So the route
+now has two shapes: the user's word settles at once and answers 200, while
+evidence answers 202 with the Operation to follow. Doc 07's row records both.
+
+One gap fell out of building it. A manual upload was refused while a step was
+waiting on the user — which is precisely the moment someone wants to share a
+screenshot of the result. Doc 05 always allowed it ("manual upload alone stores
+context"); the route did not. It does now.
+
+The browser demo refuses to check, with the reason: it has no vision provider,
+and a simulated verdict about a real screenshot would be an invented
+verification. That is the same refusal it already makes about watching.
+
+Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
 ## Deletion, at last: 2026-09-14 · V2.0
 
 The only thing a user could delete was a screenshot. The goal they typed, the transcript they

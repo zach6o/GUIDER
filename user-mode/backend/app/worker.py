@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app import models as m
 from app.errors import GuideError
 from app.guide.engine import record_event, transition
-from app.guide.guard import vet_analysis, vet_instruction
+from app.guide.guard import vet_analysis, vet_instruction, vet_observation
 from app.guide.planner import context_for, persist, steps_for
 from app.guide.replan import (
     carried_verifications,
@@ -18,12 +18,13 @@ from app.guide.replan import (
 )
 from app.guide.steps import (
     confirmed_plan,
+    current_instruction,
     next_open_step,
     publish_instruction,
     retire_instructions,
 )
 from app.imports.text import vet_import
-from app.providers.base import ImportContext, InstructionContext
+from app.providers.base import ImportContext, InstructionContext, ObserveContext
 from app.schemas import Analysis
 from app.service import purge_image, usable
 
@@ -289,6 +290,96 @@ async def run_instruction(app, db, pending, session, request_id: str) -> None:
         )
 
 
+async def run_verification(app, db, pending, session, request_id: str) -> None:
+    """Role `observe`, against a still the user shared rather than a live frame.
+
+    The session is already `verifying` — the route moved it there when it
+    accepted the evidence — so this either completes the check or returns the
+    step to the user, per doc 05.
+    """
+    from app.guide.evidence import VERIFY_TIMEOUT_SECONDS, evidence_for, record, settle
+
+    try:
+        if pending.deadline_at <= m.now():
+            raise GuideError(503, "operation_timeout", "Checking the screenshot timed out.")
+        images = await evidence_for(db, pending)
+        if not images:
+            raise GuideError(410, "data_deleted", "That screenshot is no longer available.")
+        image = images[0]
+        usable(image)
+        step = await db.get(m.TaskStep, session.current_step_id or "")
+        if step is None:
+            raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+        instruction = await current_instruction(db, session)
+        claim = await db.scalar(
+            select(m.CompletionClaim)
+            .where(
+                m.CompletionClaim.owner_id == session.owner_id,
+                m.CompletionClaim.session_id == session.id,
+                m.CompletionClaim.step_id == step.id,
+                m.CompletionClaim.status == "user_claimed",
+            )
+            .order_by(m.CompletionClaim.claimed_at.desc())
+            .limit(1)
+        )
+        pixels = await app.state.storage.read(image.object_key)
+        # The adapter proposes; the guard vets it; only then does it count.
+        result = vet_observation(
+            await asyncio.wait_for(
+                app.state.observer.observe(
+                    ObserveContext(
+                        success_criterion=step.success_criterion,
+                        expected_result=step.expected_result,
+                        application_key=step.application_key,
+                    ),
+                    pixels,
+                ),
+                timeout=VERIFY_TIMEOUT_SECONDS,
+            )
+        )
+        verification = await record(
+            db, session, step, claim, instruction, result, image.id, request_id
+        )
+        pending.result_ref = verification.id
+        pending.status = "succeeded"
+        advanced = await settle(db, session, step, verification, request_id)
+        if advanced:
+            await queue_next_instruction(db, session, request_id)
+        await record_event(
+            db, session, "operation.completed", request_id, {"operation_id": pending.id}
+        )
+    except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
+        pending.status = "failed"
+        pending.error_code = "dependency_unavailable"
+        # Doc 05: a failed check returns the step to the user rather than losing
+        # it. Nothing about the step changed, so nothing needs undoing.
+        await transition(db, session, "awaiting_user_action", "verification_failed", request_id)
+        await record_event(
+            db, session, "operation.failed", request_id, {"operation_id": pending.id}
+        )
+
+
+async def queue_next_instruction(db, session, request_id: str) -> None:
+    """After a pass, ask for the next step the same way every other path does."""
+    await transition(db, session, "processing", "next_step_requested", request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=session.owner_id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="instruct",
+        status="queued",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest="",
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    await db.flush()
+    await record_event(db, session, "operation.started", request_id, {"operation_id": operation.id})
+
+
 async def tick(app) -> None:
     async with app.state.sessions() as db, db.begin():
         pending = await db.scalar(
@@ -325,12 +416,13 @@ async def tick(app) -> None:
             return
         pending.status = "running"
         pending.attempt_count += 1
-        if pending.kind in {"plan", "instruct", "replan", "import"}:
+        if pending.kind in {"plan", "instruct", "replan", "import", "verify"}:
             handler = {
                 "plan": run_plan,
                 "instruct": run_instruction,
                 "replan": run_replan,
                 "import": run_import,
+                "verify": run_verification,
             }[pending.kind]
             await handler(app, db, pending, session, request_id)
             pending.completed_at = m.now()

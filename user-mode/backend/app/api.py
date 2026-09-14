@@ -535,13 +535,17 @@ async def skip(
 
 @router.post(
     "/sessions/{session_id}/steps/{step_id}/verifications",
-    response_model=s.Envelope[s.SelfReported],
+    # Two shapes, because there are two arms: the user's word settles at once and
+    # answers 200, while evidence is checked by a worker and answers 202 with the
+    # Operation to follow.
+    response_model=s.Envelope[s.SelfReported] | s.Envelope[s.Pending],
 )
 async def verify_step(
     session_id: UUID,
     step_id: UUID,
     body: s.VerifyRequest,
     request: Request,
+    response: Response,
     db: Db,
     owner: Owner,
     key: Key,
@@ -563,13 +567,11 @@ async def verify_step(
     if session.state != "awaiting_user_action":
         raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
     if body.evidence_ids:
-        # Not silently ignored: a caller that sent evidence asked for an
-        # objective check, and returning a self-report instead would be a lie.
-        raise GuideError(
-            422,
-            "evidence_required",
-            "Checking a screenshot is not available yet. "
-            "You can tell Guider what happened instead.",
+        # The objective arm. A caller that sent evidence asked for a check, and
+        # now gets one: the observer looks at the still and the bands decide.
+        response.status_code = 202
+        return await check_evidence(
+            session, step, body, request, db, owner, key, request_digest
         )
     if not body.self_report.strip():
         raise GuideError(
@@ -676,6 +678,90 @@ async def feedback(
         verification_withdrawn=recorded.verification_id is not None,
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 201)
+    return envelope(request, result)
+
+
+async def check_evidence(
+    session: m.GuideSession,
+    step: m.TaskStep,
+    body: s.VerifyRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: UUID,
+    request_digest: str,
+):
+    """Accept a screenshot as evidence for the current step.
+
+    Doc 05's `awaiting_user_action -> verifying` row needs accepted new evidence,
+    which is what this validates before anything is queued: the image is this
+    owner's, still usable, and attached to this task. The check itself is a
+    durable Operation, because a provider call that outlives the request is
+    exactly what Operations are for.
+    """
+    if len(body.evidence_ids) != 1:
+        raise GuideError(
+            422, "validation_failed", "Share one screenshot of the result to check."
+        )
+    image = await owned(db, m.ScreenshotRow, str(body.evidence_ids[0]), owner.id)
+    usable(image)
+    if image.task_id != session.task_id:
+        raise GuideError(422, "validation_failed", "That screenshot belongs to another task.")
+
+    claim = await db.scalar(
+        select(m.CompletionClaim).where(
+            m.CompletionClaim.id == str(body.claim_id),
+            m.CompletionClaim.owner_id == owner.id,
+            m.CompletionClaim.session_id == session.id,
+            m.CompletionClaim.step_id == step.id,
+        )
+    )
+    if claim is None:
+        raise not_found()
+    if claim.status != "user_claimed":
+        raise GuideError(
+            409, "invalid_transition", "That confirmation was replaced by a newer one."
+        )
+
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "verifying", "evidence_submitted", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="verify",
+        status="queued",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    # Flushed before the evidence row: the composite foreign key points at this
+    # operation, and an ordering surprise would fail the whole request.
+    await db.flush()
+    db.add(
+        m.OperationEvidence(
+            operation_id=operation.id,
+            screenshot_id=image.id,
+            owner_id=owner.id,
+            # Which version of that image was checked: replacing it later must not
+            # make an old result look like it described the new pixels.
+            version=image.version,
+        )
+    )
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "verification.started",
+        request.state.request_id,
+        {"step_id": step.id, "operation_id": operation.id, "evidence_id": image.id},
+    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 
 
@@ -983,7 +1069,11 @@ async def upload(
         if session.task_id != task.id:
             raise not_found()
         check_version(session, meta.expected_version)
-        if session.state not in ANALYSIS_STATES:
+        # Doc 05 allows a manual upload while a step is waiting on the user:
+        # "manual upload alone stores context". It became load-bearing with the
+        # evidence arm of verification, because the moment a user wants to share
+        # a screenshot of the result is precisely while the step is open.
+        if session.state not in ANALYSIS_STATES | {"awaiting_user_action"}:
             raise GuideError(409, "operation_in_progress", "Wait for the current analysis.")
     replacement = None
     if meta.replaces_screenshot_id:

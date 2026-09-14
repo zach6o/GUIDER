@@ -1,6 +1,6 @@
 # ADR-017 · Provider abstraction by bounded role
 
-Date: 2026-09-12 · Status: proposed for v2; amends [014](014-initial-stack-and-contracts.md) and generalizes the OpenAI-specific connector in [015](015-browser-observation-and-personal-cloud.md). Resolves D01 into a per-provider gate rather than a single blocking choice. Does not alter [005](005-guide-not-control.md), [009](009-persist-task-state.md) or [012](012-high-risk-action-gates.md).
+Date: 2026-09-12 · Status: **adopted** 2026-09-14; implemented in PR-1 and proven in PR-16 by the provider matrix and the source gate in `tests/test_provider_matrix.py`. Amends [014](014-initial-stack-and-contracts.md) and generalizes the OpenAI-specific connector in [015](015-browser-observation-and-personal-cloud.md). Resolves D01 into a per-provider gate rather than a single blocking choice. Does not alter [005](005-guide-not-control.md), [009](009-persist-task-state.md) or [012](012-high-risk-action-gates.md).
 
 ## Context
 

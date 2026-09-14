@@ -1,6 +1,6 @@
 # ADR-018 · Imported conversation context
 
-Date: 2026-09-12 · Status: proposed for v2; new ground. Depends on [ADR-017](017-provider-role-abstraction.md). Does not alter [005](005-guide-not-control.md), [010](010-one-step-guidance.md) or [012](012-high-risk-action-gates.md); constrained by [09](../09-security-and-privacy.md) SEC-09 and [13](../13-ai-behavior-policy.md).
+Date: 2026-09-12 · Status: **adopted** 2026-09-14; implemented in PR-17. New ground. Depends on [ADR-017](017-provider-role-abstraction.md). Does not alter [005](005-guide-not-control.md), [010](010-one-step-guidance.md) or [012](012-high-risk-action-gates.md); constrained by [09](../09-security-and-privacy.md) SEC-09 and [13](../13-ai-behavior-policy.md).
 
 ## Context
 

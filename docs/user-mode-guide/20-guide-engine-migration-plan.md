@@ -1,6 +1,6 @@
 # 20 · Guide Engine migration plan
 
-Status: **proposed, awaiting approval**. No code change is authorized by this document. It records how the implemented slice in [19](19-implementation-status.md) becomes the Guide Engine architecture, which decisions change ([ADR-016](adr/016-web-first-tiered-observation.md)/[017](adr/017-provider-role-abstraction.md)/[018](adr/018-imported-conversation-context.md)), and the order of work. Authority for states stays with [05](05-session-state-machine.md), for routes with [07](07-api-contracts.md), for entities with [08](08-data-model.md) and for safety with [09](09-security-and-privacy.md); this plan adds to them and overrides none.
+Status: **approved 2026-09-12 and merged in full**; every PR in the phase tables below landed on `main`, the last of them PR-18 on 2026-09-13. Kept as the record of how the work was sequenced and what each exit gate demanded; further work is not authorized by this document. It records how the implemented slice in [19](19-implementation-status.md) becomes the Guide Engine architecture, which decisions change ([ADR-016](adr/016-web-first-tiered-observation.md)/[017](adr/017-provider-role-abstraction.md)/[018](adr/018-imported-conversation-context.md)), and the order of work. Authority for states stays with [05](05-session-state-machine.md), for routes with [07](07-api-contracts.md), for entities with [08](08-data-model.md) and for safety with [09](09-security-and-privacy.md); this plan adds to them and overrides none.
 
 ## Invariants
 

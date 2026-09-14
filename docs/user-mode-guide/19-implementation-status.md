@@ -1,5 +1,33 @@
 # 19 · Implementation status and session handoff
 
+## The record catches up with the code: 2026-09-14
+
+No behaviour changed here. The migration in [20](20-guide-engine-migration-plan.md) is merged
+through PR-18 — every phase, including the phase-4 exit gate — and three pieces of the record were
+still describing an earlier repository.
+
+[ADR-017](adr/017-provider-role-abstraction.md) and [ADR-018](adr/018-imported-conversation-context.md)
+are **adopted**. Both were implemented and gate-tested while still marked proposed, which is the
+state doc 20's change process exists to prevent. ADR-016's own gates are unaffected and stay shut.
+
+[16](16-testing-strategy.md) gained T41–T48 and A11–A13 for the Phase 3 and 4 mechanisms that had no
+test IDs: tiered admission, the observation route and its budgets, continuous-observation consent
+and one-tap stop, the server-driven guide and its self-report arm, stuck detection and replan, the
+provider role abstraction, conversation import, and completion honesty. Its status line no longer
+says no test has been implemented, because that stopped being true at PR-1; it now separates the
+proposed release gates from what actually runs in CI. T43 joins the safety-critical set.
+[17](17-traceability-matrix.md) maps the new IDs onto the requirement rows they serve and records
+which file and which test carries each one.
+
+What is still not proven is unchanged and worth restating in one place: no request in the suite
+reaches a provider, the observation loop has never run against a live session, the per-owner row
+lock is covered by exactly one concurrent-confirmation test on PostgreSQL in CI and by nothing
+under load, there is no native client and therefore no
+[011](adr/011-application-allowlisting.md) allowlist, and D01, D05 and D06 remain open. Continuous
+observation stays unavailable in production until the last two of those close.
+
+Verification: documentation only. No source file changed, so the counts below still stand.
+
 ## Session summary and completed-guide history: 2026-09-13
 
 A task can now end, and the record says honestly how it ended.

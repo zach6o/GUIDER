@@ -225,6 +225,80 @@ verification. That is the same refusal it already makes about watching.
 Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
 
+## Managed access, written and switched off: 2026-09-14 · V2.6
+
+Premium is usually built as a second pipeline: one path reading the user's key,
+another reading managed configuration. That is also the design that guarantees
+the two will drift, because every change has to be made twice and only one of
+them is exercised by the tests a developer runs locally.
+
+`app/providers/entitlement.py` refuses that shape. Entitlement changes exactly
+one thing — where the credential comes from — and everything downstream is
+identical: the same adapters, the same schema, the same guard, the same budgets,
+the same events. Resolution is written as a fall-through rather than a branch:
+managed when entitled and available, then the owner's own binding, then nothing,
+which the registry answers by reaching for the fixture and touching no network.
+
+Three properties have tests because they are the ones that would be expensive to
+get wrong. A managed credential reports that it is **not** the owner's, which is
+the single question an export or a deletion has to ask. Entitlement is read at
+resolution time, so a subscription lapsing mid-task moves the *next* call to the
+owner's own key rather than stopping a running guide — punishing a user for an
+accounting event is not a failure mode worth shipping. And no credential is
+printable, because a repr that leaked a key would put it in every log line that
+touched it.
+
+**Nothing here is on.** `managed_available()` requires both a provider selected
+under D01 and a credential root provisioned under D02, and no deployment has
+either; a deployment with one and not the other is treated as misconfigured
+rather than half-enabled. Every test that exercises the managed path constructs a
+deployment that does not exist. The plumbing is written and held to its
+promises; the switch is not ours to throw.
+
+With this, every phase of [22](22-guider-v2-architecture.md) has an
+implementation. What remains is not code: D01, D02, D05, D06, the native client
+and its allowlist, and the fact that **no request has ever reached a real
+provider**.
+
+Current verification on this branch: 429 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. V2.3 and V2.4 are in their own open pull
+requests; the counts reconcile as those merge.
+
+## Finding it again, and taking a copy: 2026-09-14 · V2.5
+
+History gained the filters a person actually reaches for — how the task ended, a
+date range, and a search — and the search is deliberately narrow: it matches the
+title and the goal, which are the user's own words. **Nothing Guider read off a
+screen is searchable.** A search box over descriptions of somebody's desktop is a
+different product, and there is a test that holds that line by watching a screen
+described as "a download page" and then failing if searching for it finds
+anything.
+
+`GET /sessions/{id}/export` hands the user their own record: the goal, every
+step, how each one was settled in the record's own vocabulary — checked on
+screen, you reported this, skipped, needs separate review, not started — the
+summary, and a count of frames looked at. What it omits is what Guider *saw*: no
+screen descriptions, no control labels, no frames. An export exists to be kept
+and forwarded, and one carrying a description of somebody's desktop would be a
+liability handed to them without warning. That omission has its own test.
+
+`web/src/guide/speech.ts` reads the current step aloud: the action, where to
+look, and what to listen for — not the explanation, because reading that every
+time turns guidance into narration. It cancels before every utterance rather than
+queueing, since a queue of stale instructions would have the user hearing a step
+they are already past, and it will not repeat itself on a re-render.
+
+Voice is delivery, never authority. The speaker exposes `speak`, `speakOnce`,
+`cancel` and `speaking`, and a test asserts that surface exactly: it cannot
+claim a step, accept a skip, agree to be watched or confirm anything. Hearing an
+instruction is not performing it. Off by default, because a guide that started
+talking when a page loaded would be a guide that talked over a meeting.
+
+Current verification on this branch: 418 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. The branch does not yet include V2.3 and
+V2.4, whose own pull requests were open when this was written; the counts
+reconcile when those merge.
+
 ## Deletion, at last: 2026-09-14 · V2.0
 
 The only thing a user could delete was a screenshot. The goal they typed, the transcript they

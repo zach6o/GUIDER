@@ -19,6 +19,17 @@ class Category(StrEnum):
     git_github = "git_github"
 
 
+class Outcome(StrEnum):
+    """How a task ended. Filterable, because "show me what I actually finished"
+    is the question history exists to answer."""
+
+    achieved = "achieved"
+    user_reported = "user_reported"
+    stopped = "stopped"
+    failed = "failed"
+    expired = "expired"
+
+
 class SessionState(StrEnum):
     task_created = "task_created"
     analyzing = "analyzing"
@@ -609,6 +620,43 @@ class SkippedForward(Schema):
     steps: list[Step]
     session: Session
     next_operation_id: UUID | None = None
+
+
+class ExportedStep(Schema):
+    ordinal: int
+    title: str
+    action: str
+    status: str
+    #: How this step was settled, in the record's own vocabulary: `checked on
+    #: screen`, `you reported this`, `skipped`, `needs separate review`, or
+    #: `not started`. The distinction the whole record exists to keep.
+    settled_by: str
+    verified_at: datetime | None = None
+    confidence: float | None = None
+
+
+class SessionExport(Schema):
+    """One task, as the user's own record.
+
+    Contains what they wrote and what Guider concluded, and deliberately not what
+    Guider saw: no screen descriptions, no control labels, no frames. An export
+    the user forwards should not carry a description of their desktop.
+    """
+
+    exported_at: datetime
+    task_title: str
+    goal: str
+    category: str
+    application: str
+    started_at: datetime
+    ended_at: datetime | None
+    outcome: str | None
+    steps: list[ExportedStep]
+    summary_text: str = ""
+    corrections: list[str] = []
+    #: Counts rather than contents: how many frames were looked at, never what
+    #: was on them.
+    frames_observed: int = 0
 
 
 class FeedbackRequest(Schema):

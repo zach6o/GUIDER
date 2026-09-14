@@ -1,7 +1,11 @@
 # 21 · Continuous-observation consent notice
 
-Status: **draft, pending D06 approval**. Version `observation-draft-1`, pinned in
-`app/guide/observation.py` as `NOTICE_VERSION`. A session may only switch watching on
+Status: **draft, pending D06 approval**. Version `observation-draft-2`, pinned in
+`app/guide/observation.py` as `NOTICE_VERSION`. Version 2 is a rewrite, not an edit:
+[22](22-guider-v2-architecture.md) adds a running description of the screen, and version 1
+described something narrower — frames checked against one step. A session that accepted
+version 1 is asked again rather than carried forward, which is what the version check has
+always been for. A session may only switch watching on
 by sending this exact version; an older one is refused and the notice is shown again.
 Production remains hard-gated in `Settings.check()` until this notice is approved.
 
@@ -27,9 +31,17 @@ the numbers and the controls may not be changed without a new version.
 > every few seconds, and only after something changed. Anything you hide with the mask
 > never leaves your computer — the hiding happens here, before anything is sent.
 >
-> **What is kept.** Nothing. Pictures are used to answer one question — did this step
-> happen — and are never saved, not by Guider and not in any backup. Guider keeps only
-> the answer and a count of how many pictures it looked at.
+>
+> **What Guider works out.** From each picture it forms a short description of what is on
+> the window — which application it looks like, what screen you are on, which buttons and
+> fields it can see, whether a dialog or an error is up. That description is how it knows
+> you are in the right place, that a step is already done, or that something is blocking
+> you.
+>
+> **What is kept.** Never the picture. Pictures are used and discarded, never saved, not by
+> Guider and not in any backup. The short descriptions are kept for seven days, so the guide
+> can tell whether anything changed, and are deleted with the task whenever you delete it.
+> Guider also keeps a count of how many pictures it looked at.
 >
 > **How much.** Up to 200 checks and 30 minutes of watching per task, and no more than 12
 > pictures a minute. When that runs out, Guider keeps guiding and you tell it when a step
@@ -39,9 +51,15 @@ the numbers and the controls may not be changed without a new version.
 > they do with a picture once it reaches them, and a picture already sent cannot be
 > recalled.
 >
-> **Stopping.** One tap, any time, in the guide. Watching stops immediately, including any
-> check already in progress. Guider never watches anything else on your screen, never
-> types, never clicks, and never acts for you.
+>
+> **What it will never do with what it reads.** Text on your screen is something Guider
+> reads, never something it obeys. If a window contains words aimed at Guider, they are
+> ignored and never turned into a step.
+>
+> **Stopping.** One tap, any time, in the guide. Watching also stops on its own after five
+> minutes with nothing happening, and your place is saved. Watching stops immediately when
+> you stop it, including any check already in progress. Guider never watches anything else
+> on your screen, never types, never clicks, and never acts for you.
 >
 > Guider will show you how many pictures it has looked at, the whole time it is watching.
 

@@ -33,7 +33,7 @@ VERIFICATION_RETENTION = timedelta(days=30)
 # The notice the user agreed to. Draft until D06 approves the wording; a session
 # that accepted an older version must be asked again rather than silently carried
 # forward, which is what pinning the version here buys.
-NOTICE_VERSION = "observation-draft-1"
+NOTICE_VERSION = "observation-draft-2"
 
 
 def calls_remaining(session: m.GuideSession) -> int:

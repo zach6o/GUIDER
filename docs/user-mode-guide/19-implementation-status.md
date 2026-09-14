@@ -1,5 +1,42 @@
 # 19 · Implementation status and session handoff
 
+## Guidance that follows the screen: 2026-09-14 · V2.2
+
+`next_open_step` hands out the lowest-numbered step still waiting, which is a
+correct plan reader and a poor instructor. `app/guide/adapt.py` reads the belief
+the Context Engine formed and decides which of six things is happening: the step
+is in progress, the screen satisfies it, a later step is already done, the user
+is off track or in the wrong application, a dialog is blocking them, or the
+window cannot be read.
+
+The selector is a pure function over one belief, so the table is the rule and can
+be read in one place. Three boundaries hold it in: it may point at a different
+step of the confirmed plan and never invent one; it hands a satisfied step to the
+verification path rather than settling it; and the one move that changes the
+user's record — skipping forward — asks.
+
+That asking is a route, not a branch. `POST .../skip-forward` takes back the step
+ids the user was shown, refuses anything behind the guide, refuses anything the
+guard blocked, and records what it settles as `skipped` — not verified, not
+reported done, because nobody said they were. A context tick can offer; only the
+user can accept.
+
+Being off track three times on one step raises the stuck signal that already
+exists, which is how a redirect that is not working becomes an offer of a
+different plan rather than a louder redirect.
+
+The consent notice is rewritten to `observation-draft-2`, and this is a rewrite
+rather than an edit. Version 1 described frames checked against one step; the
+product now forms a running description of the screen, keeps those descriptions
+for seven days, and reads text it must never obey. The notice says all three in
+the user's words, and adds that watching stops itself after five minutes of
+nothing happening. A session that accepted version 1 is asked again, which is what
+the version check has always been for. **D06 approval is still outstanding**, and
+production is still gated.
+
+Current verification: 410 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
 ## The guide can say what it is looking at: 2026-09-14 · V2.1
 
 The observer answers one question — is this step's criterion satisfied? — which

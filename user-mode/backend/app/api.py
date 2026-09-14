@@ -13,6 +13,8 @@ from app import schemas as s
 from app.auth import Db, Owner
 from app.erasure import erase_account, erase_session, erase_task, receipt_for
 from app.errors import GuideError, not_found
+from app.guide.adapt import apply as apply_decision
+from app.guide.adapt import decide
 from app.guide.context import request_for, vet_context
 from app.guide.context import save as save_context
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
@@ -1042,6 +1044,83 @@ async def observe(
     )
 
 
+@router.post(
+    "/sessions/{session_id}/steps/{step_id}/skip-forward",
+    response_model=s.Envelope[s.SkippedForward],
+)
+async def skip_forward(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.SkipForwardRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Accept the forward skip the guide offered.
+
+    This is the one adaptive move that changes the user's record rather than the
+    words on their screen, so it happens only here, only on ids the user was
+    shown, and never inside a context tick. Skipped steps are recorded as
+    skipped — not verified, and not reported done — because nobody said they
+    were.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    current = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+
+    plan = await confirmed_plan(db, session)
+    known = {row.id: row for row in await steps_for(db, plan)}
+    chosen = []
+    for identifier in body.step_ids:
+        row = known.get(str(identifier))
+        if row is None:
+            raise not_found()
+        if row.ordinal <= current.ordinal:
+            # Forward only. Re-settling something behind the guide would be a
+            # different act with different consequences.
+            raise GuideError(
+                422, "validation_failed", "That step is not ahead of the one you are on."
+            )
+        if row.policy_disposition == "block":
+            raise GuideError(
+                409,
+                "blocked_task",
+                "One of those steps needs separate review. Guider will not settle it.",
+            )
+        chosen.append(row)
+
+    for row in sorted(chosen, key=lambda item: item.ordinal):
+        row.status = "skipped"
+        row.updated_at = m.now()
+    current.status = "skipped"
+    current.updated_at = m.now()
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "context.skipped_forward",
+        request.state.request_id,
+        {"step_ids": [row.id for row in chosen], "from_step_id": current.id},
+    )
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "processing", "skipped_forward", request.state.request_id)
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.SkippedForward(
+        steps=[step_view(row) for row in [current, *chosen]],
+        session=s.Session.model_validate(session),
+        next_operation_id=operation.id,
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
 @router.post("/sessions/{session_id}/context", response_model=s.Envelope[s.ContextTick])
 async def observe_context(
     session_id: UUID,
@@ -1103,6 +1182,12 @@ async def observe_context(
         row, changed = await save_context(
             db, session, step, context, request.state.request_id
         )
+        # What the belief means for the guide. Nothing here writes session state:
+        # the decision is recorded, counted when it means trouble, and returned.
+        decision = decide(context, step, later)
+        await apply_decision(
+            db, session, step, instruction, decision, request.state.request_id
+        )
 
     return envelope(
         request,
@@ -1122,6 +1207,12 @@ async def observe_context(
             note=context.note,
             observation_calls_remaining=calls_remaining(session),
             session=s.Session.model_validate(session),
+            action=decision.action,
+            message=decision.message,
+            offer=s.SkipOffer(
+                step_ids=[UUID(value) for value in decision.skippable],
+                titles=[row.title for row in later if row.id in set(decision.skippable)],
+            ) if decision.skippable else None,
         ),
     )
 

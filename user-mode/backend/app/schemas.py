@@ -534,6 +534,13 @@ class SeenControl(Schema):
     kind: str
 
 
+class SkipOffer(Schema):
+    """What a forward skip would settle, named before it happens."""
+
+    step_ids: list[UUID] = []
+    titles: list[str] = []
+
+
 class ContextTick(Schema):
     """What the guide now believes, and whether it changed anything.
 
@@ -558,6 +565,32 @@ class ContextTick(Schema):
     note: str = ""
     observation_calls_remaining: int
     session: Session
+    #: What the guide decided to do about this screen. `none` is the common case
+    #: and the cheap one.
+    action: Literal[
+        "none", "check", "redirect", "wrong_application", "dialog", "offer_skip", "unreadable"
+    ] = "none"
+    #: Copy for the island, in the user's language. Empty when nothing is wrong.
+    message: str = ""
+    #: Present only with `offer_skip`. Nothing is settled until the user accepts.
+    offer: SkipOffer | None = None
+
+
+class SkipForwardRequest(Schema):
+    """Accept the forward skip the guide offered.
+
+    The step ids are echoed back so a stale offer cannot settle steps the user
+    never saw named.
+    """
+
+    expected_version: Annotated[int, Field(ge=1)]
+    step_ids: Annotated[list[UUID], Field(min_length=1, max_length=11)]
+
+
+class SkippedForward(Schema):
+    steps: list[Step]
+    session: Session
+    next_operation_id: UUID | None = None
 
 
 class FeedbackRequest(Schema):

@@ -49,11 +49,11 @@ test('the notice is read before a window is ever chosen', async ({ page }) => {
   await expect(dialog(page)).toBeVisible();
   await expect(dialog(page)).toContainText('only while a step is waiting on you');
   await expect(dialog(page)).toContainText('never leaves your computer');
-  await expect(dialog(page)).toContainText('Nothing. Pictures are used to answer one question');
+  await expect(dialog(page)).toContainText('Never the picture. Pictures are used and discarded, never saved');
   await expect(dialog(page)).toContainText('200 checks and 30 minutes');
   await expect(dialog(page)).toContainText('One tap, any time');
   // The version the agreement is recorded against is on screen, not implied.
-  await expect(dialog(page)).toContainText('Notice version observation-draft-1');
+  await expect(dialog(page)).toContainText('Notice version observation-draft-2');
   // Nothing has been shared yet: the picker is the next press, not this one.
   await expect(page.locator('.watch-preview')).toHaveCount(0);
 });

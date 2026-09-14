@@ -1,5 +1,39 @@
 # 19 · Implementation status and session handoff
 
+## Three findings from the frontend audit, and a bug one of them uncovered: 2026-09-14
+
+The audit of the web app named an error boundary as the one thing to fix: a
+render-time exception unmounted the tree and left a blank page, in an application
+whose whole job is to be trustworthy on screen while somebody works. A guide that
+vanishes mid-task is worse than a guide that says it broke, because the user is
+left wondering whether their task survived.
+
+`src/ErrorBoundary.tsx` wraps the application outside `App`, so a failure while
+building the page itself is still caught. The fallback says what happened, that
+nothing is lost, and how to get back — and shows no stack trace, because a
+message the user cannot act on is noise and an error string can carry fragments
+of whatever the guide was holding.
+
+**Writing that copy found a real bug.** The fallback says watching has stopped,
+and it had not: nothing stopped the watcher or the capture when the tree
+unmounted, so a crash — or simply navigating away — could leave the loop encoding
+frames for a guide nobody was looking at. `App` now halts both on unmount, which
+makes the sentence true. The honest copy was what exposed it.
+
+The single 328 KB bundle is now split: the live screen guide pulls in the
+practice demo, the capture stack and the frame encoder — a third of the JavaScript
+and a quarter of the CSS for a page most visits never open — and it loads when
+someone asks for it. The main bundle is 302 KB (93 KB gzipped) with a 33 KB
+lazy chunk.
+
+**Dark mode is not shipped, deliberately.** The audit listed it, and the
+stylesheet turns out to carry 260 distinct colour literals against 7 tokens. A
+half-converted palette ships white cards punched through a dark page, which is
+worse than no dark mode at all. The work is a palette pass over those literals,
+and it is worth doing as its own change rather than as a corner of this one.
+
+Current verification: 124 web unit tests pass and 53 browser scenarios pass in
+installed Chrome on this branch, which does not include V2.3 to V2.6.
 ## Five more providers, and somewhere safe to keep a key: 2026-09-14 · V2.4
 
 OpenRouter, Groq, DeepSeek, Ollama and LM Studio all speak the OpenAI
@@ -75,7 +109,6 @@ away — a browser cannot see the desk, and the wording must not pretend it can.
 
 Current verification: 425 backend tests pass and 12 skip on SQLite, 137 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
-
 ## Guidance that follows the screen: 2026-09-14 · V2.2
 
 `next_open_step` hands out the lowest-numbered step still waiting, which is a

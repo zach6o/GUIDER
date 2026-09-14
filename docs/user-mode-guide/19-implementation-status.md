@@ -225,6 +225,41 @@ verification. That is the same refusal it already makes about watching.
 Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
 
+## Finding it again, and taking a copy: 2026-09-14 · V2.5
+
+History gained the filters a person actually reaches for — how the task ended, a
+date range, and a search — and the search is deliberately narrow: it matches the
+title and the goal, which are the user's own words. **Nothing Guider read off a
+screen is searchable.** A search box over descriptions of somebody's desktop is a
+different product, and there is a test that holds that line by watching a screen
+described as "a download page" and then failing if searching for it finds
+anything.
+
+`GET /sessions/{id}/export` hands the user their own record: the goal, every
+step, how each one was settled in the record's own vocabulary — checked on
+screen, you reported this, skipped, needs separate review, not started — the
+summary, and a count of frames looked at. What it omits is what Guider *saw*: no
+screen descriptions, no control labels, no frames. An export exists to be kept
+and forwarded, and one carrying a description of somebody's desktop would be a
+liability handed to them without warning. That omission has its own test.
+
+`web/src/guide/speech.ts` reads the current step aloud: the action, where to
+look, and what to listen for — not the explanation, because reading that every
+time turns guidance into narration. It cancels before every utterance rather than
+queueing, since a queue of stale instructions would have the user hearing a step
+they are already past, and it will not repeat itself on a re-render.
+
+Voice is delivery, never authority. The speaker exposes `speak`, `speakOnce`,
+`cancel` and `speaking`, and a test asserts that surface exactly: it cannot
+claim a step, accept a skip, agree to be watched or confirm anything. Hearing an
+instruction is not performing it. Off by default, because a guide that started
+talking when a page loaded would be a guide that talked over a meeting.
+
+Current verification on this branch: 418 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. The branch does not yet include V2.3 and
+V2.4, whose own pull requests were open when this was written; the counts
+reconcile when those merge.
+
 ## Deletion, at last: 2026-09-14 · V2.0
 
 The only thing a user could delete was a screenshot. The goal they typed, the transcript they

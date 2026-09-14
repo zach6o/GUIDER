@@ -160,6 +160,9 @@ async def erase_session(
         return result.rowcount or 0
 
     removed["events"] = await wipe(m.GuidanceEvent, m.GuidanceEvent.session_id == session.id)
+    removed["contexts"] = await wipe(
+        m.ScreenContextRow, m.ScreenContextRow.session_id == session.id
+    )
     removed["verifications"] = await wipe(
         m.VerificationResult, m.VerificationResult.session_id == session.id
     )

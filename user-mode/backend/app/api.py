@@ -13,6 +13,8 @@ from app import schemas as s
 from app.auth import Db, Owner
 from app.erasure import erase_account, erase_session, erase_task, receipt_for
 from app.errors import GuideError, not_found
+from app.guide.context import request_for, vet_context
+from app.guide.context import save as save_context
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.feedback import record as record_feedback
 from app.guide.guard import vet_observation
@@ -45,7 +47,7 @@ from app.guide.steps import (
 from app.guide.summary import require_ending, write_summary
 from app.imports.redact import MAX_TRANSCRIPT, redact
 from app.media import MAX_BYTES, normalize, prepare_frame
-from app.providers.base import ObserveContext
+from app.providers.base import ContextRequest, ObserveContext  # noqa: F401
 from app.service import (
     cancel_pending,
     check_version,
@@ -1035,6 +1037,120 @@ async def observe(
             note=result.note,
             frames_observed=session.frames_observed,
             observation_calls_remaining=max(0, MAX_OBSERVATION_CALLS - session.observation_calls),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
+@router.post("/sessions/{session_id}/context", response_model=s.Envelope[s.ContextTick])
+async def observe_context(
+    session_id: UUID,
+    body: s.ContextTickRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+):
+    """What is on the shared window now.
+
+    The sibling of `/observe`, and deliberately not a replacement for it: that
+    route decides whether a step is done, this one decides what the guide is
+    looking at. Both draw on one budget, because they are the same user's frames
+    and the same bill.
+
+    Nothing here advances a step. The answer is a belief with a digest, and the
+    digest is what the client uses to know that the instruction it already has
+    still stands ([ADR-019](../../../docs/user-mode-guide/adr/019-context-engine.md)).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    check_version(session, body.expected_version)
+    if not session.observation_active:
+        raise GuideError(403, "observation_off", "Watching is not switched on for this task.")
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    check_budget(session)
+
+    epoch = session.control_epoch
+    gate = request.app.state.observation
+    gate.admit(session.id, time.monotonic())
+    if gate.lock(session.id).locked():
+        raise GuideError(409, "observation_in_progress", "Guider is still looking at the last one.")
+
+    instruction = await current_instruction(db, session)
+    if instruction is None:
+        raise GuideError(409, "invalid_transition", "There is no current instruction to check.")
+    step = await owned_step(db, session, instruction.step_id)
+    plan = await confirmed_plan(db, session)
+    later = [row for row in await steps_for(db, plan) if row.ordinal > step.ordinal]
+
+    async with gate.lock(session.id):
+        pixels = await asyncio.to_thread(prepare_frame, body.image_base64)
+        observer = (
+            getattr(request.app.state, "context_observer", None) or request.app.state.observer
+        )
+        # The adapter proposes; the guard vets it. Screen text is data, and a
+        # control whose label reads as an instruction never becomes one.
+        context = vet_context(
+            await asyncio.wait_for(
+                observer.observe_context(request_for(step, later), pixels),
+                timeout=20,
+            )
+        )
+        await db.refresh(session)
+        if not session.observation_active or session.control_epoch != epoch:
+            raise GuideError(409, "observation_stopped", "Watching was switched off.")
+        session.observation_calls += 1
+        session.frames_observed += 1
+        row, changed = await save_context(
+            db, session, step, context, request.state.request_id
+        )
+
+    return envelope(
+        request,
+        s.ContextTick(
+            stage=context.stage,
+            application=context.application,
+            application_matches_expected=context.application_matches_expected,
+            screen=context.screen,
+            dialog=context.dialog or None,
+            error_text=context.error_text or None,
+            controls=[
+                s.SeenControl(label=c.label, box=c.box, kind=c.kind) for c in context.controls
+            ],
+            confidence=context.confidence,
+            digest=row.digest,
+            changed=changed,
+            note=context.note,
+            observation_calls_remaining=calls_remaining(session),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
+@router.get("/sessions/{session_id}/context", response_model=s.Envelope[s.ContextTick] | None)
+async def last_context(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """The last belief recorded, for a client that reconnected. Answers 404 when
+    nothing has been observed yet, which is not an error — it is the default."""
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    from app.guide.context import latest
+
+    row = await latest(db, session)
+    if row is None:
+        raise not_found()
+    return envelope(
+        request,
+        s.ContextTick(
+            stage=row.stage,
+            application=row.application,
+            application_matches_expected=row.application_matches_expected,
+            screen=row.screen,
+            dialog=row.dialog,
+            error_text=row.error_text,
+            controls=[],
+            confidence=row.confidence,
+            digest=row.digest,
+            changed=False,
+            note="",
+            observation_calls_remaining=calls_remaining(session),
             session=s.Session.model_validate(session),
         ),
     )

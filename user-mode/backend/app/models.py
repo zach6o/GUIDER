@@ -520,6 +520,51 @@ class DeletionJob(Owned, Base):
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+CONTEXT_STAGES = (
+    "before_start",
+    "in_progress",
+    "step_satisfied",
+    "later_step_satisfied",
+    "off_track",
+    "blocked_dialog",
+    "unreadable",
+)
+
+
+class ScreenContextRow(Owned, Base):
+    """What the guide believed was on the shared window at one moment.
+
+    Descriptions and a hash, never pixels: the frame it came from existed for one
+    request (ADR-004, ADR-019). Nothing here can verify a step — that is the
+    whole point of keeping it in its own table rather than widening
+    VerificationResult.
+    """
+
+    __tablename__ = "screen_contexts"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id"),
+        ForeignKeyConstraint(
+            ["owner_id", "session_id"],
+            ["guide_sessions.owner_id", "guide_sessions.id"],
+        ),
+        CheckConstraint(f"stage IN {CONTEXT_STAGES}", name="screen_contexts_stage"),
+    )
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    stage: Mapped[str]
+    #: Hash of what a guide would act on. Equal digests mean equal screens, as far
+    #: as guidance is concerned, and an equal digest costs nothing.
+    digest: Mapped[str] = mapped_column(String(64), index=True)
+    application: Mapped[str] = mapped_column(String(80), default="")
+    application_matches_expected: Mapped[bool] = mapped_column(default=True)
+    screen: Mapped[str] = mapped_column(String(120), default="")
+    dialog: Mapped[str | None] = mapped_column(String(200))
+    error_text: Mapped[str | None] = mapped_column(String(200))
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    control_count: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
 class GuidanceEvent(Owned, Base):
     __tablename__ = "guidance_events"
     __table_args__ = (UniqueConstraint("session_id", "sequence"),)

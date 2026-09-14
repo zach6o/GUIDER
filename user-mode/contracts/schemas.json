@@ -415,6 +415,133 @@
         ],
         "title": "ConnectOutput"
       },
+      "ContextTick": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "before_start",
+              "in_progress",
+              "step_satisfied",
+              "later_step_satisfied",
+              "off_track",
+              "blocked_dialog",
+              "unreadable"
+            ],
+            "title": "Stage"
+          },
+          "application": {
+            "type": "string",
+            "title": "Application"
+          },
+          "application_matches_expected": {
+            "type": "boolean",
+            "title": "Application Matches Expected"
+          },
+          "screen": {
+            "type": "string",
+            "title": "Screen"
+          },
+          "dialog": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialog"
+          },
+          "error_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Text"
+          },
+          "controls": {
+            "items": {
+              "$ref": "#/components/schemas/SeenControl"
+            },
+            "type": "array",
+            "title": "Controls",
+            "default": []
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          },
+          "observation_calls_remaining": {
+            "type": "integer",
+            "title": "Observation Calls Remaining"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "application",
+          "application_matches_expected",
+          "screen",
+          "confidence",
+          "digest",
+          "changed",
+          "observation_calls_remaining",
+          "session"
+        ],
+        "title": "ContextTick",
+        "description": "What the guide now believes, and whether it changed anything.\n\n`instruction_pending` is the field that matters for cost: false means the\nscreen is the same screen as far as guidance is concerned, and no reasoning\ncall was made."
+      },
+      "ContextTickRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "image_base64": {
+            "type": "string",
+            "maxLength": 6000000,
+            "minLength": 1,
+            "title": "Image Base64"
+          },
+          "admitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Admitted At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "image_base64",
+          "admitted_at"
+        ],
+        "title": "ContextTickRequest",
+        "description": "One admitted frame, for the context observer. Same shape as `/observe`:\nthe browser has already discarded almost everything (ADR-016 tiers 0 and 1)."
+      },
       "CreatedTask": {
         "properties": {
           "task": {
@@ -584,6 +711,25 @@
           "request_id"
         ],
         "title": "Envelope[ConfirmedPlan]"
+      },
+      "Envelope_ContextTick_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContextTick"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[ContextTick]"
       },
       "Envelope_CreatedTask_": {
         "properties": {
@@ -2119,6 +2265,46 @@
           "replaces_screenshot_id"
         ],
         "title": "Screenshot"
+      },
+      "SeenControl": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "box": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Box"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "label",
+          "box",
+          "kind"
+        ],
+        "title": "SeenControl"
       },
       "SelfReported": {
         "properties": {

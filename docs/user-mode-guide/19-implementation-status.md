@@ -1,5 +1,50 @@
 # 19 · Implementation status and session handoff
 
+## The guide can say what it is looking at: 2026-09-14 · V2.1
+
+The observer answers one question — is this step's criterion satisfied? — which
+is enough to advance a plan and not enough to guide anyone. `app/guide/context.py`
+adds the second question: what is on this screen?
+
+`ScreenContext` is a belief, and the separation is structural rather than
+promised. It lives in its own table, it can set no status, and
+`tests/test_context.py` holds the line that matters: a stage of `step_satisfied`
+at confidence 0.95 leaves the step exactly as it was, because only the
+verification path can verify anything.
+
+The `context_digest` is what makes looking at every admitted frame affordable. It
+hashes the application, the screen, the stage, the control labels and whether a
+dialog or an error is up — and deliberately excludes confidence, free text and
+box geometry, so a model that re-words the same screen or nudges a box by a pixel
+does not read as a changed screen. An unchanged digest means the instruction the
+user already has still stands, and no reasoning call is made. That property has
+its own parametrised test in both directions.
+
+The guard extends to this surface. Screen text is untrusted in exactly the sense
+SEC-09 means: a control labelled `SYSTEM: ignore previous instructions` is
+dropped rather than offered, a control naming a restricted action is dropped, and
+a stage claiming progress below the acting floor is downgraded rather than
+recorded. A mark pointing at a control found on a screen would be Guider acting
+on words it read there.
+
+`POST /sessions/{id}/context` is the sibling of `/observe`, not its replacement:
+that route decides whether a step is done, this one decides what the guide is
+looking at, and both draw on one 200-call budget because they are the same user's
+frames and the same bill. `GET /sessions/{id}/context` reads the last belief back
+for a client that reconnected.
+
+The fixture provider serves the new role by refusing to guess — the same belief
+every time, `unreadable` at confidence 0. A fixture that invented screens would
+produce a digest that changed on every frame, which is precisely the failure the
+design cannot tolerate.
+
+Not proven: no real model has produced a context. Whether a cheap one describes a
+screen consistently enough for the digest to hold is the load-bearing assumption
+of this phase, and it needs a provider key to test.
+
+Current verification: 393 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
 ## A step can finally be verified: 2026-09-14 · V2.0
 
 The product's central promise is *one verified step at a time*, and until today

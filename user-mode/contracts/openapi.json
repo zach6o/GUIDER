@@ -3698,6 +3698,182 @@
         }
       }
     },
+    "/api/v1/guide/sessions/{session_id}/steps/{step_id}/skip-forward": {
+      "post": {
+        "summary": "Skip Forward",
+        "description": "Accept the forward skip the guide offered.\n\nThis is the one adaptive move that changes the user's record rather than the\nwords on their screen, so it happens only here, only on ids the user was\nshown, and never inside a context tick. Skipped steps are recorded as\nskipped \u2014 not verified, and not reported done \u2014 because nobody said they\nwere.",
+        "operationId": "skip_forward_api_v1_guide_sessions__session_id__steps__step_id__skip_forward_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Step Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkipForwardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_SkippedForward_"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/guide/sessions/{session_id}/context": {
       "post": {
         "summary": "Observe Context",
@@ -6387,6 +6563,35 @@
           },
           "session": {
             "$ref": "#/components/schemas/Session"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "none",
+              "check",
+              "redirect",
+              "wrong_application",
+              "dialog",
+              "offer_skip",
+              "unreadable"
+            ],
+            "title": "Action",
+            "default": "none"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkipOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -6907,6 +7112,25 @@
           "request_id"
         ],
         "title": "Envelope[Session]"
+      },
+      "Envelope_SkippedForward_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SkippedForward"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SkippedForward]"
       },
       "Envelope_Skipped_": {
         "properties": {
@@ -8467,6 +8691,58 @@
         ],
         "title": "SessionState"
       },
+      "SkipForwardRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "step_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 11,
+            "minItems": 1,
+            "title": "Step Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "step_ids"
+        ],
+        "title": "SkipForwardRequest",
+        "description": "Accept the forward skip the guide offered.\n\nThe step ids are echoed back so a stale offer cannot settle steps the user\nnever saw named."
+      },
+      "SkipOffer": {
+        "properties": {
+          "step_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Step Ids",
+            "default": []
+          },
+          "titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Titles",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkipOffer",
+        "description": "What a forward skip would settle, named before it happens."
+      },
       "SkipRequest": {
         "properties": {
           "expected_version": {
@@ -8520,6 +8796,39 @@
           "session"
         ],
         "title": "Skipped"
+      },
+      "SkippedForward": {
+        "properties": {
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "next_operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "steps",
+          "session"
+        ],
+        "title": "SkippedForward"
       },
       "StartRequest": {
         "properties": {

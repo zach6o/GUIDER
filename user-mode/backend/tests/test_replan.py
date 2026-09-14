@@ -64,7 +64,7 @@ async def watching(harness, session):
         PREFIX + f"/sessions/{session['id']}/observation",
         json={
             "expected_version": session["state_version"],
-            "consent_version": "observation-draft-1",
+            "consent_version": "observation-draft-2",
             "accepted": True,
         },
         headers={"Idempotency-Key": str(uuid4())},

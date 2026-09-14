@@ -495,6 +495,35 @@
           },
           "session": {
             "$ref": "#/components/schemas/Session"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "none",
+              "check",
+              "redirect",
+              "wrong_application",
+              "dialog",
+              "offer_skip",
+              "unreadable"
+            ],
+            "title": "Action",
+            "default": "none"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkipOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1015,6 +1044,25 @@
           "request_id"
         ],
         "title": "Envelope[Session]"
+      },
+      "Envelope_SkippedForward_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SkippedForward"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SkippedForward]"
       },
       "Envelope_Skipped_": {
         "properties": {
@@ -2575,6 +2623,58 @@
         ],
         "title": "SessionState"
       },
+      "SkipForwardRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "step_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 11,
+            "minItems": 1,
+            "title": "Step Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "step_ids"
+        ],
+        "title": "SkipForwardRequest",
+        "description": "Accept the forward skip the guide offered.\n\nThe step ids are echoed back so a stale offer cannot settle steps the user\nnever saw named."
+      },
+      "SkipOffer": {
+        "properties": {
+          "step_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Step Ids",
+            "default": []
+          },
+          "titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Titles",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkipOffer",
+        "description": "What a forward skip would settle, named before it happens."
+      },
       "SkipRequest": {
         "properties": {
           "expected_version": {
@@ -2628,6 +2728,39 @@
           "session"
         ],
         "title": "Skipped"
+      },
+      "SkippedForward": {
+        "properties": {
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "next_operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "steps",
+          "session"
+        ],
+        "title": "SkippedForward"
       },
       "StartRequest": {
         "properties": {

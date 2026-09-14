@@ -22,6 +22,9 @@ Status: proposed product implementation baseline, 2026-09-07. No ADR implies exi
 | [016](016-web-first-tiered-observation.md) | Web-first guidance with tiered observation | R06/R07/R11/R12/R16/R21/R23 |
 | [017](017-provider-role-abstraction.md) | Provider abstraction by bounded role | R18/R19/R22/R23 |
 | [018](018-imported-conversation-context.md) | Imported conversation context | R02/R05/R18 |
+| [019](019-context-engine.md) | Screen context as a first-class belief | R06/R08/R10/R23 |
+| [020](020-overlay-surfaces.md) | Two overlay surfaces, one mark vocabulary | R07/R08/R21 |
+| [021](021-managed-provider-mode.md) | Managed credentials as a source, not a second pipeline | R15/R19/R23 |
 
 ## v2 supersessions
 
@@ -32,6 +35,18 @@ ADRs 016–018 belong to the Guide Engine architecture in [20](../20-guide-engin
 | [016](016-web-first-tiered-observation.md) | **Adopted** 2026-09-12. Its own gates stay shut: no production continuous observation before the D06 notice and the [011](011-application-allowlisting.md) native gates |
 | [017](017-provider-role-abstraction.md) | **Adopted** 2026-09-14. The provider package, registry and role protocols shipped in PR-1; PR-16 added a second adapter and the exit gate that reads `app/` and fails if anything outside `app/providers/` names a provider. D01 remains open per provider for account mode |
 | [018](018-imported-conversation-context.md) | **Adopted** 2026-09-14. Implemented in PR-17: paste-only transport, redaction before the row is written, injected instructions dropped, restricted actions kept and blocked, and a draft the user confirms |
+
+## V2 · live visual instruction
+
+ADRs 019–021 belong to the architecture in [22](../22-guider-v2-architecture.md). All three are
+**proposed**; nothing in them is implemented, and no phase of that plan begins before its
+architecture is approved.
+
+| ADR | Status |
+|---|---|
+| [019](019-context-engine.md) | Proposed. Adds a second observation role and a derived, content-free record. Load-bearing assumption: a cheap model produces a stable digest |
+| [020](020-overlay-surfaces.md) | Proposed. Records that a browser cannot draw on another application's window, and defines one mark vocabulary for both surfaces so the native overlay is a renderer swap |
+| [021](021-managed-provider-mode.md) | Proposed. Keeps premium access as a credential source inside the existing registry. Blocked on D01 and D02 |
 
 | Earlier ADR | Status under v2 | What changes |
 |---|---|---|

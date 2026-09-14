@@ -225,6 +225,45 @@ verification. That is the same refusal it already makes about watching.
 Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
 
+## Managed access, written and switched off: 2026-09-14 · V2.6
+
+Premium is usually built as a second pipeline: one path reading the user's key,
+another reading managed configuration. That is also the design that guarantees
+the two will drift, because every change has to be made twice and only one of
+them is exercised by the tests a developer runs locally.
+
+`app/providers/entitlement.py` refuses that shape. Entitlement changes exactly
+one thing — where the credential comes from — and everything downstream is
+identical: the same adapters, the same schema, the same guard, the same budgets,
+the same events. Resolution is written as a fall-through rather than a branch:
+managed when entitled and available, then the owner's own binding, then nothing,
+which the registry answers by reaching for the fixture and touching no network.
+
+Three properties have tests because they are the ones that would be expensive to
+get wrong. A managed credential reports that it is **not** the owner's, which is
+the single question an export or a deletion has to ask. Entitlement is read at
+resolution time, so a subscription lapsing mid-task moves the *next* call to the
+owner's own key rather than stopping a running guide — punishing a user for an
+accounting event is not a failure mode worth shipping. And no credential is
+printable, because a repr that leaked a key would put it in every log line that
+touched it.
+
+**Nothing here is on.** `managed_available()` requires both a provider selected
+under D01 and a credential root provisioned under D02, and no deployment has
+either; a deployment with one and not the other is treated as misconfigured
+rather than half-enabled. Every test that exercises the managed path constructs a
+deployment that does not exist. The plumbing is written and held to its
+promises; the switch is not ours to throw.
+
+With this, every phase of [22](22-guider-v2-architecture.md) has an
+implementation. What remains is not code: D01, D02, D05, D06, the native client
+and its allowlist, and the fact that **no request has ever reached a real
+provider**.
+
+Current verification on this branch: 429 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. V2.3 and V2.4 are in their own open pull
+requests; the counts reconcile as those merge.
+
 ## Finding it again, and taking a copy: 2026-09-14 · V2.5
 
 History gained the filters a person actually reaches for — how the task ended, a

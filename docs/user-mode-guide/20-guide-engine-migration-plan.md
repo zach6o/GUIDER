@@ -129,8 +129,8 @@ Each item is one pull request. Exit gates are additions to [16](16-testing-strat
 | False-positive advancement | The principal failure mode. Advancing past a step the user has not done is worse than asking. **Instrumented** in PR-20: `POST /sessions/{id}/feedback` records the contradiction and `app/guide/calibration.py` reports advances, asks and contradictions per confidence band. Calibrating 0.85 against real sessions (D05) still needs sessions | Phase 3 |
 | Observation cost ceiling | Continuous observation has a real per-hour cost; a daily per-owner ceiling in account mode is a product decision | Phase 3 |
 | D01 per provider | Now a per-provider gate ([ADR-017](adr/017-provider-role-abstraction.md)). Blocks account mode; does not block BYOK | Phase 4 |
-| Picture-in-Picture absence | Unavailable on Safari and Firefox; fallbacks must be built and tested as first-class, not discovered late | Phase 2 |
-| PostgreSQL concurrency | Today's row locks are no-ops on SQLite and the engine depends on them | Phase 2 |
+| Picture-in-Picture absence | Unavailable on Safari and Firefox. **Built and tested** in PR-21: `web/src/overlay/surface.ts` offers all three surfaces with the page preselected, names why an unavailable one cannot open, and falls back with a message when one refuses. The mirrored preview is local and is not the observation path | Phase 2 |
+| PostgreSQL concurrency | Today's row locks are no-ops on SQLite and the engine depends on them. **Exercised** in PR-22: `tests/test_concurrency.py` races claims, skips, self-reports, observer ticks, stops, completions and idempotent replays against each other on PostgreSQL in CI, and asserts the invariant rather than the winner | Phase 2 |
 | Continuous-observation notice | Materially different consent from uploading a screenshot; needs D06 approval and a `privacy_notice_version` bump | Phase 3 |
 | Allowlisting remains open | A browser cannot enforce [ADR-011](adr/011-application-allowlisting.md); continuous observation stays unavailable in production until native gates exist | Before any release |
 

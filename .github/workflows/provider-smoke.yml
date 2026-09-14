@@ -1,0 +1,69 @@
+# One real request per role, run by hand.
+#
+# Never on push and never on a pull request. Provider calls cost money and leave
+# the machine, so this runs only when someone chooses to run it, and only where
+# the key exists as a repository secret. The ordinary pipeline stays offline:
+# with no credentials every role resolves to the deterministic fixture.
+name: Provider smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider id, as the registry knows it
+        required: true
+        default: anthropic
+      model:
+        description: Model name, or blank for the adapter's default
+        required: false
+        default: ''
+      roles:
+        description: Roles to exercise. Each one is a billed request.
+        required: true
+        default: plan,instruct,observe,import
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: One request per role
+    runs-on: ubuntu-latest
+    # Holds the key, and any reviewers who must approve a run before it spends.
+    environment: provider-smoke
+    defaults:
+      run:
+        working-directory: user-mode/backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: user-mode/backend/uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: One request per role
+        env:
+          GUIDE_PROVIDER_ID: ${{ inputs.provider }}
+          GUIDE_PROVIDER_MODEL: ${{ inputs.model }}
+          GUIDE_PROVIDER_API_KEY: ${{ secrets.PROVIDER_API_KEY }}
+        run: |
+          if [ -z "${GUIDE_PROVIDER_API_KEY}" ]; then
+            echo "::error::No PROVIDER_API_KEY in the provider-smoke environment."
+            exit 1
+          fi
+          uv run python -m scripts.smoke_provider \
+            --spend-real-money --roles "${{ inputs.roles }}" | tee smoke.txt
+
+      - name: Keep the answers as evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-smoke
+          path: user-mode/backend/smoke.txt
+          retention-days: 14
+          if-no-files-found: ignore

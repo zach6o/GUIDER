@@ -1,5 +1,117 @@
 # 19 · Implementation status and session handoff
 
+## A way to make a real provider request: 2026-09-14
+
+Every provider answer in the suite is a recorded shape replayed through an
+injected transport, and doc 19 has carried "no real Anthropic request has been
+made" since PR-16. That sentence is still true today, and this is the path that
+can change it.
+
+`scripts/smoke_provider.py` sends one synthetic request per role the configured
+provider serves — plan, instruct, observe and import — parses each answer through
+the adapter, runs the guard over it, and prints the verdict with its latency.
+Nothing touches a database, no session exists, the frame is a terminal drawn in
+memory rather than anyone's screen, and the transcript is four lines written in
+the file. It refuses to run without `--spend-real-money`, because a flag nobody
+types by accident is the difference between an instrument and an accident.
+
+What it reports is deliberately not a pass mark. A refusal, a truncated answer
+and a guard rejection are all printed as findings rather than raised as crashes —
+the last of those being the whole reason the guard sits outside the adapter. The
+observe run prints the confidence a real model returns on a screen where the
+honest answer is yes, and asserts nothing about it: whether a model clears 0.85
+is what D05 exists to settle, and one frame is not the sample that settles it.
+The import run sends a transcript with an injected `SYSTEM:` line and says
+plainly whether it reached the plan.
+
+`.github/workflows/provider-smoke.yml` is the only place CI can run it: manual
+dispatch, a protected `provider-smoke` environment holding the key, and the
+answers kept as an artifact. The ordinary pipeline is unchanged and still reaches
+no network.
+
+`tests/test_smoke_script.py` covers the guardrails without spending anything: an
+unconfigured machine builds no registry and sends nothing, a fixture-resolved
+role is reported as having sent nothing rather than counted as a pass, the frame
+is a real PNG with something drawn on it, and a refusal becomes a printed line.
+
+Still not proven, and the reason is worth stating plainly: **no request has been
+made yet.** This repository has no provider key, so the script has run only
+against the unconfigured path. D01 remains open per provider, and account-mode
+access stays a development switch.
+
+Current verification: 334 backend tests pass and 12 skip on SQLite, 116 web unit
+tests pass, and 48 browser scenarios pass in installed Chrome.
+
+## Racing the engine on PostgreSQL: 2026-09-14
+
+Doc 20 has said since the migration began that the row locks are no-ops on SQLite
+and the engine depends on them. One test held that line — two plan confirmations
+racing — which proved the lock exists and nothing about the paths a guide runs
+through.
+
+`tests/test_concurrency.py` races real routes against each other: claims against
+claims and ten at once, a claim against a skip, two self-reports of one claim, a
+self-report against an observer advance, a stop against a frame already in
+flight, two completions, and one idempotency key sent twice at the same moment.
+Each asserts the invariant rather than the winner, because which request wins is
+a scheduling detail: exactly one lands, the loser is refused rather than quietly
+applied, and no record describes two histories. Two more check that the event
+sequence stays gapless under concurrent writers — a client resumes at a cursor,
+so a duplicate or a gap is a missed instruction — and that the lock is per owner,
+so one user's guide never waits behind another's.
+
+They skip on SQLite rather than reporting green where `SELECT ... FOR UPDATE`
+does nothing, which is why the skip count moved from 2 to 12. CI runs the backend
+suite twice and the second run is where they count.
+
+One of them was wrong at first and said so loudly: both completions were refused
+because a session with open steps cannot be completed at all, which is a
+rejection and not a race. It now works the plan to its end before racing.
+
+What this does not cover is sustained load. These are pairs and one group of ten
+inside a single process; throughput, connection-pool exhaustion and lock waits
+under a real population remain unmeasured, and doc 07's performance budgets
+(T38) are still unexecuted.
+
+Current verification: 328 backend tests pass and 12 skip on SQLite, all 340 pass
+against PostgreSQL in CI, 116 web unit tests pass, and 48 browser scenarios pass
+in installed Chrome.
+
+## Three surfaces, not one and two consolations: 2026-09-14
+
+ADR-016 calls side-by-side and mirrored preview first-class modes, and doc 20
+lists Picture-in-Picture's absence on Safari and Firefox as a risk to build for
+rather than discover late. The code did neither. The floating window was a button
+that simply disappeared where the API was missing, the mirrored preview existed
+only in the offline practice demo, and closing the floating window ended the
+whole guide — a window control that lost the user their place.
+
+`web/src/overlay/surface.ts` makes the choice explicit. All three surfaces are
+listed whatever the browser is; one that cannot open stays on screen carrying the
+reason, because a user on Firefox should learn that the floating window is a
+Chromium feature rather than quietly receive a different product. The page is
+preselected: opening an OS window or a window picker is a deliberate act, not
+something that should happen because Start was pressed. A surface that refuses to
+open falls back to the page and says so. Closing the floating window now returns
+the guide to the page and keeps the session.
+
+The mirror is a local video element beside the guide, with its own capture kept
+apart from the observation one. Sharing a stream between them would have made
+choosing a layout imply consenting to be watched. The panel says so every time it
+is on screen: watching is separate, off by default, and asks for its own
+permission and its own window.
+
+Detection lives in one place — `overlay/pip.ts` — so the offer and the attempt
+cannot disagree.
+
+Not proven here: no Safari or Firefox run exists. The unsupported path is covered
+by deleting `documentPictureInPicture` before the page loads, which is a faithful
+shape rather than the real browser, and doc 07's hardware and browser matrix
+remains unexecuted.
+
+Current verification: 328 backend tests pass and 2 skip on SQLite, 116 web unit
+tests pass, and 48 browser scenarios pass in installed Chrome.
+
 ## Measuring the failure mode that matters: 2026-09-14
 
 `ADVANCE_AT = 0.85` has been a hypothesis since PR-13, and doc 20 calls advancing

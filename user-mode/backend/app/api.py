@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, Header, Query, Request, Response, UploadFile
-from pydantic import ValidationError
+from pydantic import AwareDatetime, ValidationError
 from sqlalchemy import func, select
 
 from app import models as m
@@ -231,7 +231,17 @@ async def sessions(
     cursor: UUID | None = None,
     task_id: UUID | None = None,
     state: s.SessionState | None = None,
+    outcome: s.Outcome | None = None,
+    since: AwareDatetime | None = None,
+    until: AwareDatetime | None = None,
+    q: Annotated[str, Query(max_length=120)] = "",
 ):
+    """History, with enough filters to find one task again.
+
+    `q` matches the task's own title and goal — the user's words, not anything
+    read off a screen. Screen-derived text is never searchable, because a search
+    box over descriptions of someone's desktop is a different product.
+    """
     query = (
         select(m.GuideSession, m.GuideTask.title)
         .join(
@@ -244,6 +254,17 @@ async def sessions(
         query = query.where(m.GuideSession.task_id == str(task_id))
     if state:
         query = query.where(m.GuideSession.state == state)
+    if outcome:
+        query = query.where(m.GuideSession.outcome == outcome)
+    if since:
+        query = query.where(m.GuideSession.created_at >= since)
+    if until:
+        query = query.where(m.GuideSession.created_at <= until)
+    if q.strip():
+        needle = f"%{q.strip().lower()}%"
+        query = query.where(
+            func.lower(m.GuideTask.title).like(needle) | func.lower(m.GuideTask.goal).like(needle)
+        )
     if cursor:
         anchor = await owned(db, m.GuideSession, str(cursor), owner.id)
         if (task_id and anchor.task_id != str(task_id)) or (state and anchor.state != state):
@@ -892,6 +913,98 @@ async def complete(
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
     return envelope(request, result)
+
+
+@router.get("/sessions/{session_id}/export", response_model=s.Envelope[s.SessionExport])
+async def export_session(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """One task, as the user's own record.
+
+    What it contains is what they wrote and what Guider concluded. What it
+    deliberately omits is what Guider *saw*: no screen descriptions, no control
+    labels, no frames. An export exists to be kept and forwarded, and one that
+    carried a description of somebody's desktop would be a liability handed to
+    them without warning.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    task = await db.get(m.GuideTask, session.task_id)
+    if task is None:
+        raise not_found()
+
+    exported: list[s.ExportedStep] = []
+    try:
+        plan = await confirmed_plan(db, session)
+        rows = await steps_for(db, plan)
+    except GuideError:
+        rows = []
+
+    reported = {
+        row.step_id
+        for row in await db.scalars(
+            select(m.VerificationResult).where(
+                m.VerificationResult.owner_id == owner.id,
+                m.VerificationResult.session_id == session.id,
+                m.VerificationResult.status == "user_reported",
+            )
+        )
+    }
+    passes = {
+        row.step_id: row
+        for row in await db.scalars(
+            select(m.VerificationResult).where(
+                m.VerificationResult.owner_id == owner.id,
+                m.VerificationResult.session_id == session.id,
+                m.VerificationResult.status == "passed",
+            )
+        )
+    }
+    for row in rows:
+        if row.status == "verified":
+            settled = "checked on screen"
+        elif row.policy_disposition == "block":
+            settled = "needs separate review"
+        elif row.status == "skipped":
+            settled = "skipped"
+        elif row.id in reported:
+            settled = "you reported this"
+        else:
+            settled = "not started"
+        exported.append(
+            s.ExportedStep(
+                ordinal=row.ordinal,
+                title=row.title,
+                action=row.action,
+                status=row.status,
+                settled_by=settled,
+                verified_at=row.verified_at,
+                confidence=(
+                    passes[row.id].observed_confidence if row.id in passes else None
+                ),
+            )
+        )
+
+    summary = await db.scalar(
+        select(m.SessionSummary).where(
+            m.SessionSummary.owner_id == owner.id,
+            m.SessionSummary.session_id == session.id,
+        )
+    )
+    return envelope(
+        request,
+        s.SessionExport(
+            exported_at=m.now(),
+            task_title=task.title,
+            goal=task.goal,
+            category=task.category,
+            application=task.application_key,
+            started_at=session.created_at,
+            ended_at=session.ended_at,
+            outcome=session.outcome,
+            steps=exported,
+            summary_text=summary.text if summary else "",
+            corrections=list(summary.corrections) if summary else [],
+            frames_observed=session.frames_observed,
+        ),
+    )
 
 
 @router.get("/sessions/{session_id}/summary", response_model=s.Envelope[s.Summary])

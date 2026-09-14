@@ -1,5 +1,42 @@
 # 19 · Implementation status and session handoff
 
+## Pointing, and noticing nobody is there: 2026-09-14 · V2.3
+
+**Marks are derived, not asked for — a deliberate departure from doc 22.** The
+architecture put a `marks` column on `instructions`. Building it showed that to be
+wrong twice over: the instruction role never sees a screen, so asking it for
+geometry would be asking it to invent coordinates; and stored geometry goes stale
+the moment the window moves. `app/guide/marks.py` instead matches the
+instruction's own words against the controls the observer reported, at the moment
+the frame was read, and the mark travels with that tick. Migration `v2_02_marks`
+is therefore unnecessary and is not written.
+
+Matching is strict on purpose. Words like "click", "button" and "open" carry no
+identifying weight, so an instruction saying "click the button" matches nothing —
+which is correct, because the whole point of a mark is *which* one. Ties break
+toward the shorter label. No confident match produces no mark at all, the ordinary
+case rather than a failure, because the instruction still says where to look in
+words. And the guard runs twice: a control naming a restricted action is dropped
+from the context and again from the mark, because a mark is the one output that
+would put Guider's finger on it.
+
+`web/src/overlay/renderer.ts` draws on Guider's mirror of the shared window.
+Marks are multiplied by the picture's own rectangle — computed rather than
+assumed, because `object-fit: contain` letterboxes and a mark placed against the
+element would drift by the size of the bars. A resize changes the multiplier and
+nothing else. A mark landing under two pixels is dropped rather than drawn as a
+speck. Labels sit above, below or inside, never over what they name, and every
+mark carries the control's name for anyone not looking at it.
+
+`web/src/guide/idle.ts` measures the two things a browser can honestly observe:
+the shared window has not changed, and nobody has touched Guider. Four stages at
+30 s, 1 min, 3 min and 5 min, each firing once, the last stopping watching and
+keeping the place. A test reads the copy and fails if it claims the user walked
+away — a browser cannot see the desk, and the wording must not pretend it can.
+
+Current verification: 425 backend tests pass and 12 skip on SQLite, 137 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
 ## Guidance that follows the screen: 2026-09-14 · V2.2
 
 `next_open_step` hands out the lowest-numbered step still waiting, which is a

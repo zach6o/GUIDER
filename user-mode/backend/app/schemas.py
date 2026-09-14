@@ -541,6 +541,21 @@ class SkipOffer(Schema):
     titles: list[str] = []
 
 
+class Mark(Schema):
+    """Where to point, in normalised frame coordinates.
+
+    `0..1` against the frame the observer read, never pixels: the renderer
+    multiplies by whatever surface it draws into, so the same payload works on a
+    mirrored preview now and a native overlay later.
+    """
+
+    kind: Literal["circle", "underline", "spotlight", "pointer"]
+    box: tuple[float, float, float, float]
+    #: Always present. An overlay-only instruction would be unusable without
+    #: sight, so the mark carries the control's name for a screen reader.
+    label: str
+
+
 class ContextTick(Schema):
     """What the guide now believes, and whether it changed anything.
 
@@ -574,6 +589,9 @@ class ContextTick(Schema):
     message: str = ""
     #: Present only with `offer_skip`. Nothing is settled until the user accepts.
     offer: SkipOffer | None = None
+    #: Where to point on the shared window, when the observer saw a control this
+    #: instruction is plausibly about. Absent is the ordinary case.
+    mark: Mark | None = None
 
 
 class SkipForwardRequest(Schema):

@@ -25,6 +25,12 @@ from app.guide.observation import (
 )
 from app.guide.observation import stop as stop_watching
 from app.guide.planner import steps_for
+from app.guide.recovery import (
+    check_retryable,
+    current_open_step,
+    record_retry,
+)
+from app.guide.recovery import resume as resume_session
 from app.guide.replan import check_stuck
 from app.guide.steps import (
     confirmed_plan,
@@ -1205,6 +1211,99 @@ async def restrict(
             await transition(db, session, "paused", body.reason, request.state.request_id)
     result = s.Session.model_validate(session)
     await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.post("/sessions/{session_id}/resume", response_model=s.Envelope[s.Resumed])
+async def resume(
+    session_id: UUID,
+    body: s.ResumeRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Pick a paused or blocked task back up.
+
+    Until now a guide could be stopped four ways and resumed none, which made
+    `blocked` a polite word for abandoned. Doc 05's rules hold here: the user
+    confirms they have looked at where the task got to, no screen permission is
+    restored, and choosing to be watched again waits for a fresh decision rather
+    than reviving the old one.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    if body.expected_version is not None:
+        check_version(session, body.expected_version)
+    target = await resume_session(
+        db, session, body.mode, body.checkpoint_reviewed, request.state.request_id
+    )
+
+    operation = None
+    if target == "awaiting_user_action" and await current_instruction(db, session) is None:
+        # Nothing is waiting on the user: the instruction was withdrawn when the
+        # session stopped. Ask for a fresh one rather than resuming into silence.
+        await transition(db, session, "processing", "next_step_requested", request.state.request_id)
+        operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Resumed(
+        session=s.Session.model_validate(session),
+        next_operation_id=operation.id if operation else None,
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
+@router.post(
+    "/sessions/{session_id}/steps/{step_id}/retries",
+    status_code=202,
+    response_model=s.Envelope[s.Pending],
+)
+async def retry_step(
+    session_id: UUID,
+    step_id: UUID,
+    body: s.RetryRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    """Ask for this step in different words.
+
+    A retry changes nothing about the step: it is not a claim, not a skip and not
+    a verification. It asks the instruction role to say the same step again, and
+    it counts, because a step reworded twice is one of the ways the guide learns
+    it is going nowhere.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    step = await owned_step(db, session, str(step_id))
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    current = await current_open_step(db, session)
+    if current is None or current.id != step.id:
+        raise GuideError(409, "invalid_transition", "That is not the step you are on.")
+    check_retryable(step)
+
+    await record_retry(db, session, step, body.reason, request.state.request_id)
+    instruction = await current_instruction(db, session)
+    if instruction is not None:
+        # The old wording stops being current now, not when the new one lands, so
+        # nothing can claim the step against an instruction already being replaced.
+        await check_stuck(db, session, step, instruction, "none", request.state.request_id)
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "processing", "retry_requested", request.state.request_id)
+    operation = await queue_instruction(db, session, request.state.request_id)
+    result = s.Pending(
+        operation_id=operation.id, session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 
 

@@ -626,6 +626,60 @@ export const demoApi: GuideApi = {
       feedback_id: uid(), session: current, step, verification_withdrawn: withdrawn,
     });
   },
+  // Doc 05's resume row: back to the checkpoint, with no permission restored.
+  // Nothing in this browser was ever watching, so only the first half applies.
+  async resume(session, mode) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    if (['completed', 'failed', 'expired'].includes(current.state)) {
+      throw new Error('This task has already finished.');
+    }
+    if (!['paused', 'blocked'].includes(current.state)) {
+      throw new Error('This task is not waiting to be resumed.');
+    }
+    const target = mode === 'window' ? 'awaiting_screen_permission' : 'awaiting_user_action';
+    move(current, target, 'resumed');
+    let operationId: string | null = null;
+    if (target === 'awaiting_user_action') {
+      // The instruction was withdrawn when the session blocked, so the step is
+      // published again rather than resuming into silence. It is found the way
+      // the engine finds it — the lowest open step — because `currentStep` reads
+      // a ready instruction and there is none left to read.
+      const open = nextOpenStep(current);
+      if (open) { publishInstruction(current, open); operationId = instructOperation().id; }
+    }
+    return clone({ session: current, next_operation_id: operationId });
+  },
+  async retryStep(session, stepId, reason) {
+    const current = requireItem(sessions, session.id);
+    if (current.state_version !== session.state_version) {
+      throw new Error('Reload the task and try again.');
+    }
+    const found = currentStep(current);
+    if (!found || found.step.id !== stepId) throw new Error('That is not the step you are on.');
+    if (found.step.policy_disposition === 'block') {
+      throw new Error('Guider will not walk you through this step. It needs separate review.');
+    }
+    if (found.step.attempt_count >= 3) {
+      throw new Error(
+        'Saying this a different way is not working. Ask for a different plan instead.',
+      );
+    }
+    found.step.attempt_count++;
+    emit(current, 'step.retry_requested', {
+      step_id: stepId, attempt: found.step.attempt_count, reason,
+    });
+    // Rewording one step twice is the same going-nowhere signal a repeated claim
+    // is, and the backend counts them the same way.
+    if (found.step.attempt_count >= STUCK_ATTEMPTS && !stuck.has(current.id)) {
+      stuck.add(current.id);
+      emit(current, 'session.stuck_detected', { step_id: stepId, reason: 'repeated_attempts' });
+    }
+    publishInstruction(current, found.step);
+    return clone({ operation_id: instructOperation().id, session: current });
+  },
   async replan(session, reason) {
     const current = requireItem(sessions, session.id);
     if (current.state_version !== session.state_version) {

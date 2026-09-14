@@ -789,6 +789,25 @@
         ],
         "title": "Envelope[Plan]"
       },
+      "Envelope_Resumed_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Resumed"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Resumed]"
+      },
       "Envelope_SelfReported_": {
         "properties": {
           "data": {
@@ -1895,6 +1914,99 @@
         ],
         "title": "ReplanRequest",
         "description": "Ask for a replacement roadmap for whatever is left.\n\nThe reason recorded here is the user's; the planner is given what the session\nactually recorded \u2014 the stuck reason and any observed anomaly \u2014 rather than\na claim typed by a client."
+      },
+      "ResumeRequest": {
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "screenshot_only",
+              "window"
+            ],
+            "title": "Mode",
+            "default": "screenshot_only"
+          },
+          "checkpoint_reviewed": {
+            "type": "boolean",
+            "title": "Checkpoint Reviewed",
+            "default": false
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResumeRequest",
+        "description": "Doc 07's resume shape. `checkpoint_reviewed` is not a formality: doc 05\nrequires the user to have seen where the guide is before it starts pointing\nagain, and a paused or blocked session is usually paused or blocked because\nsomething was wrong."
+      },
+      "Resumed": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "next_operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session"
+        ],
+        "title": "Resumed"
+      },
+      "RetryRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "RetryRequest",
+        "description": "Ask for this step to be explained again. Not a verification and not a\nskip: nothing about the step's status changes, only the words."
       },
       "Screenshot": {
         "properties": {

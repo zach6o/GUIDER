@@ -16,6 +16,7 @@ Status: T01–T40 and A01–A10 remain **proposed** release gates for the whole 
 | T08 | One instruction | Current instruction anatomy and one action; explanation/repeat does not advance; screen-reader labels present |
 | T09 | Verification | Done creates claim only; objective evidence required for passed; inconclusive/self-report not achieved; stale/deleted evidence rejected |
 | T10 | Incorrect guidance/recheck | New image after mismatch cancels obsolete result; incorrect report blocks and removes marker; revision limit enforced |
+| T50 | Resume and retry | A paused or blocked task resumes only after the checkpoint is reviewed, to the recorded checkpoint, with no screen permission restored and `mode:window` waiting for a fresh decision; a withdrawn instruction is re-requested rather than resumed into silence; a retry rewords one step without changing its status, counts toward the stuck signal, and is refused for a blocked step and past the attempt limit |
 | T11 | Pause | Local capture gate closes p95≤100ms, max250ms; no post-gate acquired/uploaded frame; queued images dropped; manual upload remains paused |
 | T12 | Stop/close/emergency | All overlays/mic/capture removed locally without network; late result cannot redisplay; backend terminal stopped summary consistent |
 | T13 | Resume/history/restart | Paused checkpoint recovered; terminal creates successor; no old grant, frame or pointer reused; image expiry visible |

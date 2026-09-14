@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, SkipForward, ThumbsDown, X } from 'lucide-react';
+import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, RotateCcw, SkipForward, ThumbsDown, X } from 'lucide-react';
 import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
@@ -33,6 +33,8 @@ export interface GuideIslandProps {
    *  the session. There is no step to show any more, only what happened next. */
   blocked?: string;
   onReportIncorrect?: (said: string) => void;
+  onResume?: () => void;
+  onRetry?: (said: string) => void;
   onStartWatching?: () => void;
   onStopWatching?: () => void;
   onReplan?: () => void;
@@ -112,9 +114,17 @@ export function GuideIsland(props: GuideIslandProps) {
       {props.blocked ? <div className="island-blocked" role="status">
         <p>{props.blocked}</p>
         <small>
-          Nothing is pointing at your screen. Share a fresh screenshot when you
-          want to pick this task up again.
+          Nothing is pointing at your screen. Read back over where the task got
+          to, then pick it up when you are ready — watching stays off until you
+          switch it on again yourself.
         </small>
+        {props.onResume && <button className="primary island-resume" onClick={props.onResume}>
+          <RotateCcw size={15} /> Pick this task up again
+        </button>}
+        {/* A resume that failed has to say so here: there is no step on screen
+            to carry the message, and a button that silently does nothing is
+            worse than one that explains itself. */}
+        {correction && <p className="island-correction" role="status">{correction}</p>}
       </div> : step ? <>
         <h3>{step.title}</h3>
         <p className="island-action">{action}</p>
@@ -160,6 +170,10 @@ export function GuideIsland(props: GuideIslandProps) {
           </button>
           <small>What you have already done is kept. Only the rest is replaced.</small>
         </div>}
+        {step && props.onRetry && !asking && <button
+          className="text-button island-retry"
+          onClick={() => props.onRetry?.('The user asked for this step again.')}
+        ><RefreshCw size={14} /> Say this a different way</button>}
         {step && props.onReportIncorrect && (reporting
           ? <div className="island-report" role="group" aria-label="Report wrong guidance">
               <p>This stops the guide and switches watching off. Your task is kept.</p>

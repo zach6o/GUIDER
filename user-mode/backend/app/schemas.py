@@ -492,6 +492,33 @@ class StopRequest(Schema):
     reason: Literal["user", "close", "sign_out", "emergency"]
 
 
+class ResumeRequest(Schema):
+    """Doc 07's resume shape. `checkpoint_reviewed` is not a formality: doc 05
+    requires the user to have seen where the guide is before it starts pointing
+    again, and a paused or blocked session is usually paused or blocked because
+    something was wrong."""
+
+    expected_version: Annotated[int, Field(ge=1)] | None = None
+    mode: Literal["screenshot_only", "window"] = "screenshot_only"
+    checkpoint_reviewed: bool = False
+    device_id: UUID | None = None
+
+
+class Resumed(Schema):
+    session: Session
+    #: Set when the guide needs a fresh instruction before anything is waiting on
+    #: the user: a resume after `incorrect_guidance` withdrew the old one.
+    next_operation_id: UUID | None = None
+
+
+class RetryRequest(Schema):
+    """Ask for this step to be explained again. Not a verification and not a
+    skip: nothing about the step's status changes, only the words."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    reason: Annotated[str, Field(max_length=1000)] = ""
+
+
 class FeedbackRequest(Schema):
     """Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05
     has it invalidate the pointer, revoke observation and block the session, so

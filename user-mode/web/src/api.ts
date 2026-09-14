@@ -110,6 +110,15 @@ const remote: GuideApi = {
   reportIncorrect: (session, stepId, text) => post(`/sessions/${session.id}/feedback`, {
     expected_version: session.state_version, kind: 'incorrect_guidance', step_id: stepId, text,
   }),
+  // checkpoint_reviewed is sent as true because the island shows the user where
+  // the task got to before this button exists to press (doc 05).
+  resume: (session, mode) => post(`/sessions/${session.id}/resume`, {
+    expected_version: session.state_version, mode, checkpoint_reviewed: true,
+  }),
+  retryStep: (session, stepId, reason) => post(
+    `/sessions/${session.id}/steps/${stepId}/retries`,
+    { expected_version: session.state_version, reason },
+  ),
   replan: (session, reason) => post(`/sessions/${session.id}/replan`, {
     expected_version: session.state_version, reason,
   }),

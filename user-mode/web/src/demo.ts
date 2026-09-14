@@ -795,6 +795,20 @@ export const demoApi: GuideApi = {
   async observe() {
     throw new Error('This demo never looks at your screen.');
   },
+  async observeContext() {
+    // The same refusal, for the same reason: describing a screen it cannot see
+    // would be an invented belief, and a belief is what the guide acts on.
+    throw new Error('This demo never looks at your screen.');
+  },
+  async skipForward(session, stepId, stepIds) {
+    const current = requireItem(sessions, session.id);
+    const plan = confirmedPlanFor(current);
+    const settled = plan.steps.filter(step => step.id === stepId || stepIds.includes(step.id));
+    for (const step of settled) step.status = 'skipped';
+    emit(current, 'context.skipped_forward', { step_ids: stepIds, from_step_id: stepId });
+    prepareNextStep(current);
+    return clone({ session: current });
+  },
   async events(id, after, waitMs) {
     const log = events.get(id) ?? [];
     const items = log.filter(event => event.sequence > after);

@@ -1,5 +1,46 @@
 # 19 · Implementation status and session handoff
 
+## V2 reaches the screen: 2026-09-15
+
+Every V2 phase had an implementation and none of it was reachable. The Context
+Engine answered a route nobody called; the idle watcher, the speaker and the
+overlay renderer were modules with tests and no callers. This connects them.
+
+**One frame, two questions.** The watch loop already encodes a masked frame once
+per admitted tick; it now sends that same encoding to `/context` as well as
+`/observe`. Encoding twice would double the work on the user's machine for no
+more information, and the two calls already draw on one budget server-side.
+Context is an improvement and never a requirement: if the context call fails, the
+tick carries on and the step is still checked, because a guide that stopped
+checking steps because it could not describe the screen would be worse than one
+that only checks steps.
+
+The island now says what the guide believes, in the user's words, and only when
+something is wrong — the wrong application, a dialog in the way, a screen that
+cannot be read. Most ticks say nothing has changed and the island is untouched,
+which is the whole point of the digest.
+
+A forward skip is offered with every step it would settle **named**, and accepted
+by a separate act: the offer is a tick, the acceptance is a route. The copy says
+what the record will say — *skipped*, not checked and not the user's word.
+
+Idle staging runs only while something is watching, because with watching off
+there is no screen to be quiet and the guide waits indefinitely by design. The
+five-minute stage stops watching through the ordinary stop and keeps the place.
+
+Reading aloud is offered where the browser has speech synthesis and simply absent
+where it does not — offered-and-broken is worse than not offered. It is off until
+asked for, silent the moment it is switched off, and it never speaks a step the
+guide has already passed.
+
+Not reachable yet, and honestly so: marks are returned by the context tick but
+nothing draws them, because the only surface that could is the mirrored preview
+and the demo has no vision provider to produce one. The renderer and its tests
+exist; wiring them needs a real context from a real provider.
+
+Current verification: 484 backend tests pass and 12 skip on SQLite, 149 web unit
+tests pass, and 55 browser scenarios pass in installed Chrome.
+
 ## Three findings from the frontend audit, and a bug one of them uncovered: 2026-09-14
 
 The audit of the web app named an error boundary as the one thing to fix: a

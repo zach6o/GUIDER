@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, RotateCcw, SkipForward, ThumbsDown, X } from 'lucide-react';
+import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, RotateCcw, SkipForward, ThumbsDown, Volume2, VolumeX, X } from 'lucide-react';
 import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
@@ -35,6 +35,16 @@ export interface GuideIslandProps {
   onReportIncorrect?: (said: string) => void;
   onResume?: () => void;
   onRetry?: (said: string) => void;
+  /** What the guide believes about the screen right now, in the user's words.
+   *  Empty whenever nothing is wrong, which is most of the time. */
+  contextMessage?: string;
+  /** Reading the step aloud. Absent where the browser has no speech synthesis,
+   *  so the control is not offered rather than offered and broken. */
+  speaking?: boolean;
+  onToggleSpeech?: () => void;
+  /** Steps a forward skip would settle, named before anything happens. Nothing
+   *  is settled until the user accepts. */
+  skipOffer?: { titles: string[]; accept: () => void; dismiss: () => void } | null;
   onStartWatching?: () => void;
   onStopWatching?: () => void;
   onReplan?: () => void;
@@ -187,6 +197,18 @@ export function GuideIsland(props: GuideIslandProps) {
           : <button className="text-button island-report-start" onClick={() => setReporting(true)}>
               <ThumbsDown size={14} /> This guidance is wrong
             </button>)}
+        {props.contextMessage && <p className="island-context" role="status">
+          <Eye size={13} aria-hidden="true" /> {props.contextMessage}
+        </p>}
+        {props.skipOffer && <div className="island-skip-offer" role="group" aria-label="Skip ahead">
+          <p>This looks further along than the plan. Shall I mark these done and move on?</p>
+          <ul>{props.skipOffer.titles.map(title => <li key={title}>{title}</li>)}</ul>
+          <div className="island-answers">
+            <button className="primary" onClick={props.skipOffer.accept}>Yes, move ahead</button>
+            <button className="text-button" onClick={props.skipOffer.dismiss}>No, stay here</button>
+          </div>
+          <small>They are recorded as skipped — not as checked, and not as your word.</small>
+        </div>}
         {props.watchNotice && <p className="island-watch-notice" role="status">{props.watchNotice}</p>}
         {watching
           ? <div className="island-watching">
@@ -204,6 +226,12 @@ export function GuideIsland(props: GuideIslandProps) {
               onClick={props.onStartWatching}
             ><Eye size={14} /> Let Guider watch this window</button>}
         <div className="island-secondary">
+          {props.onToggleSpeech && <button
+            onClick={props.onToggleSpeech}
+            aria-pressed={!!props.speaking}
+            aria-label={props.speaking ? 'Stop reading steps aloud' : 'Read steps aloud'}
+          >{props.speaking ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            {props.speaking ? 'Silence' : 'Read aloud'}</button>}
           <button onClick={props.onTogglePause} aria-label={paused ? 'Resume the guide' : 'Pause the guide'}>
             {paused ? <Play size={14} /> : <Pause size={14} />}{paused ? 'Resume' : 'Pause'}
           </button>

@@ -18,6 +18,8 @@ import {
 import type { IslandState } from './overlay/states';
 import { islandStateFor, stuckMessage, useLiveGuide } from './guide/live';
 import { Watcher } from './guide/watching';
+import { IdleWatcher } from './guide/idle';
+import { browserSpeaker, spokenText } from './guide/speech';
 import { createFrameSource, type MaskArea } from './overlay/frameSource';
 import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
@@ -71,6 +73,9 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [surface, setSurface] = useState<GuideSurface>(defaultSurface);
   const [confirmDelete, setConfirmDelete] = useState<HistoryItem | null>(null);
+  const [contextMessage, setContextMessage] = useState('');
+  const [skipOffer, setSkipOffer] = useState<{ titles: string[]; stepIds: string[] } | null>(null);
+  const [speaking, setSpeaking] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState('');
   const [mirroring, setMirroring] = useState(false);
   const [email, setEmail] = useState('');
@@ -85,6 +90,8 @@ export default function App() {
   // stream between them would quietly make the first imply the second.
   const mirror = useRef(new ScreenCapture());
   const watcher = useRef<Watcher | null>(null);
+  const idle = useRef<IdleWatcher | null>(null);
+  const speaker = useRef(browserSpeaker());
   const goalInput = useRef<HTMLTextAreaElement>(null);
   const generation = useRef(0);
   const actionSequence = useRef(0);
@@ -102,6 +109,7 @@ export default function App() {
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
   useEffect(() => () => { mirror.current.stop(); }, []);
+  useEffect(() => () => { speaker.current?.cancel(); }, []);
   // Watching must not outlive the page that is doing it. Without this, a crash
   // that unmounts the tree — or a navigation away — leaves the loop encoding
   // frames for a guide nobody is looking at, which is exactly what the error
@@ -262,6 +270,13 @@ export default function App() {
   // accepts a claim and a self-report.
   const live = useLiveGuide(api, session);
   const guide = useRef(live);
+  // Voice follows the instruction on screen. Off unless asked for, silent the
+  // moment it is switched off, and never queued behind a step already passed.
+  useEffect(() => {
+    const instruction = live.state.instruction;
+    if (!speaking || !instruction) { speaker.current?.cancel(); return; }
+    speaker.current?.speakOnce(spokenText(instruction));
+  }, [speaking, live.state.instruction]);
   useEffect(() => { guide.current = live; });
   const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block');
   const activeStep = live.state.step;
@@ -271,6 +286,9 @@ export default function App() {
   function releaseWatching() {
     watcher.current?.halt();
     watcher.current = null;
+    idle.current = null;
+    setContextMessage('');
+    setSkipOffer(null);
     capture.current.stop();
     if (watchVideo.current) watchVideo.current.srcObject = null;
     setFramesObserved(null);
@@ -291,12 +309,35 @@ export default function App() {
       session: () => guide.current.session,
       awaitingAction: () => guide.current.awaitingAction(),
       onCounters: frames => setFramesObserved(frames),
+      // What the guide now believes it is looking at. Most ticks say nothing has
+      // changed, and the island stays exactly as it was.
+      onContext: tick => {
+        if (tick.changed) idle.current?.activity();
+        setContextMessage(tick.message);
+        setSkipOffer(
+          tick.action === 'offer_skip' && tick.offer
+            ? { titles: tick.offer.titles, stepIds: tick.offer.step_ids }
+            : null,
+        );
+      },
       // A middle-band verdict is worth one question and nothing more.
       onTick: tick => { if (tick.decision === 'ask') guide.current.observerAsked(); },
       onNotice: setWatchNotice,
       onStopped: reason => { releaseWatching(); setWatchNotice(reason); },
     });
     watcher.current = running;
+    // Quiet time is only meaningful while something is watching: with watching
+    // off there is no screen to be quiet, and the guide waits indefinitely by
+    // design.
+    idle.current = new IdleWatcher({
+      onStage: step => {
+        setWatchNotice(step.message);
+        if (step.stage === 'stop') {
+          idle.current?.reset();
+          void stopWatching(step.message);
+        }
+      },
+    });
     await running.start(consentVersion);
     setWatchOpen(false);
     setWatchNotice('');
@@ -390,6 +431,19 @@ export default function App() {
       await supabase?.auth.signOut();
       setSignedIn(false);
       setNotice(`Your account is deleted. Receipt ${receipt.id.slice(0, 8)}.`);
+    });
+  }
+
+  async function acceptSkipForward() {
+    const step = live.state.step;
+    const current = live.session;
+    if (!step || !current || !skipOffer) return;
+    await work('Moving ahead…', async () => {
+      const result = await api.skipForward(current, step.id, skipOffer.stepIds);
+      setSession(result.session);
+      setSkipOffer(null);
+      setContextMessage('');
+      setNotice('Marked those as skipped and moved on. Nothing was recorded as checked.');
     });
   }
 
@@ -671,6 +725,14 @@ export default function App() {
       stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
       blocked={live.state.blocked}
       onReportIncorrect={said => void reportIncorrect(said)}
+      contextMessage={contextMessage}
+      speaking={speaking}
+      onToggleSpeech={speaker.current ? () => setSpeaking(on => !on) : undefined}
+      skipOffer={skipOffer ? {
+        titles: skipOffer.titles,
+        accept: () => void acceptSkipForward(),
+        dismiss: () => { setSkipOffer(null); setContextMessage(''); },
+      } : null}
       onResume={() => void resumeGuide()}
       onRetry={said => void live.retry(said)}
       onReplan={() => void askForNewPlan()}

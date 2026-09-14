@@ -47,7 +47,8 @@ Initial inspection found only `.git/`, an unborn `main` branch, no tracked files
 | [18 Inspection report](18-repository-inspection-report.md) | Repository facts and evidence limitations |
 | [19 Implementation status](19-implementation-status.md) | Implemented scope, verification evidence and remaining phase gates |
 | [20 Guide Engine migration plan](20-guide-engine-migration-plan.md) | Approved v2 migration, invariants and PR-sized phases; all phases merged through PR-18 |
-| [21 Observation consent notice](21-observation-consent-notice.md) | Normative wording for continuous-observation consent; **draft pending D06** |
+| [21 Observation consent notice](21-observation-consent-notice.md) | Normative wording for continuous-observation consent; **draft pending D06**, and rewritten by [22](22-guider-v2-architecture.md) before continuous context ships |
+| [22 Guider V2 architecture](22-guider-v2-architecture.md) | Live visual instruction: context engine, adaptive guidance, overlay surfaces, provider breadth; **proposed, awaiting approval** |
 | [ADRs](adr/README.md) | Decision rationale and change controls |
 
 Resolve conflicts by domain authority above. Do not silently choose between conflicting contracts: fix the documents and associated traceability first. `MUST`, `MUST NOT` and `SHOULD` are normative requirements, prohibitions and defaults with documented exceptions. ADRs explain decisions but do not override newer explicit contracts without updating both.

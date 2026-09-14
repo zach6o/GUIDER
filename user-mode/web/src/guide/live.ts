@@ -18,7 +18,7 @@ import { followEvents } from './events';
 import type { IslandState } from '../overlay/states';
 
 export type LivePhase =
-  | 'idle' | 'starting' | 'waiting' | 'asking' | 'preparing' | 'finished' | 'error';
+  | 'idle' | 'starting' | 'waiting' | 'asking' | 'preparing' | 'finished' | 'blocked' | 'error';
 
 export interface LiveState {
   phase: LivePhase;
@@ -36,6 +36,9 @@ export interface LiveState {
   /** Why the session says it is going nowhere, if it has said so. Nothing about
    *  being stuck changes what the guide does; it only offers a way out. */
   stuck: string;
+  /** Set once the user has said the guidance was wrong and the server has
+   *  blocked the session. The guide stops here rather than pointing again. */
+  blocked: string;
 }
 
 export type LiveAction =
@@ -46,6 +49,7 @@ export type LiveAction =
   | { type: 'observer_ask' }
   | { type: 'stuck'; reason: string }
   | { type: 'not_yet' }
+  | { type: 'blocked'; message: string }
   | { type: 'finished' }
   | { type: 'failed'; message: string }
   | { type: 'pause' }
@@ -53,7 +57,7 @@ export type LiveAction =
 
 export const initialLiveState: LiveState = {
   phase: 'idle', instruction: null, step: null, claimId: null, askedBy: null,
-  correction: '', error: '', paused: false, stuck: '',
+  correction: '', error: '', paused: false, stuck: '', blocked: '',
 };
 
 export function liveReducer(state: LiveState, action: LiveAction): LiveState {
@@ -90,6 +94,13 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
       return {
         ...state, phase: 'finished', instruction: null, step: null, claimId: null, askedBy: null,
       };
+    case 'blocked':
+      // Nothing is current any more: the server withdrew the instruction, so the
+      // island must not keep showing it as something to do.
+      return {
+        ...state, phase: 'blocked', blocked: action.message, instruction: null, step: null,
+        claimId: null, askedBy: null, correction: '', stuck: '',
+      };
     case 'failed':
       return { ...state, phase: 'error', error: action.message };
     case 'pause':
@@ -100,7 +111,7 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
 }
 
 export function islandStateFor(state: LiveState): IslandState {
-  if (state.phase === 'error') return 'error';
+  if (state.phase === 'error' || state.phase === 'blocked') return 'error';
   if (state.paused) return 'idle';
   if (state.phase === 'finished') return 'finished';
   if (state.phase === 'asking') return 'attention';
@@ -135,6 +146,9 @@ export interface LiveGuide {
   skip: () => Promise<void>;
   /** An observer verdict in the middle band: worth one question, nothing more. */
   observerAsked: () => void;
+  /** Say the current guidance was wrong. Expensive by design (doc 05): the
+   *  pointer is withdrawn, watching is revoked and the session blocks. */
+  reportIncorrect: (said: string) => Promise<void>;
   /** Ask for a replacement plan for whatever is left. Resolves with the
    *  operation to follow, or null when there is nothing to replan. */
   replan: () => Promise<string | null>;
@@ -261,6 +275,24 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   const observerAsked = useCallback(() => dispatch({ type: 'observer_ask' }), []);
 
+  const reportIncorrect = useCallback((said: string) => act(async () => {
+    const session = current.current;
+    const step = state.step;
+    if (!session || !step) return;
+    const recorded = await api.reportIncorrect(session, step.id, said);
+    current.current = recorded.session;
+    // Watching is already off server-side; stop listening too, because the
+    // session will publish nothing more until the user resumes it.
+    following.current?.abort();
+    following.current = null;
+    dispatch({
+      type: 'blocked',
+      message: recorded.verification_withdrawn
+        ? 'Thanks. That step is no longer marked as checked, and Guider has stopped watching.'
+        : 'Thanks. Guider has stopped pointing at this step and stopped watching.',
+    });
+  }), [act, api, state.step]);
+
   const replan = useCallback(async (): Promise<string | null> => {
     const session = current.current;
     if (!session) return null;
@@ -298,6 +330,6 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   return {
     state, session: current.current, awaitingAction,
-    start, claim, answer, skip, observerAsked, replan, togglePause, close,
+    start, claim, answer, skip, observerAsked, reportIncorrect, replan, togglePause, close,
   };
 }

@@ -96,6 +96,15 @@ export interface ImportAccepted {
 }
 export interface Receipt { id: string; status: string; online_purge_due_at: string }
 export interface TaskInput { goal: string; category: Category; application_key: string }
+export interface FeedbackRecorded {
+  feedback_id: string;
+  session: Session;
+  step: Step | null;
+  /** True when the user contradicted a pass the observer reached on its own.
+   *  The step is pending again and nothing claims it was verified. */
+  verification_withdrawn: boolean;
+}
+
 export interface GuideApi {
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
   importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
@@ -124,4 +133,5 @@ export interface GuideApi {
   startWatching(session: Session, consentVersion: string): Promise<ObservationState>;
   stopWatching(id: string): Promise<ObservationState>;
   observe(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ObservationTick>;
+  reportIncorrect(session: Session, stepId: string, text: string): Promise<FeedbackRecorded>;
 }

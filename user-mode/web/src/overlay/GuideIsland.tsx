@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, SkipForward, X } from 'lucide-react';
+import { Check, CircleHelp, Compass, Eye, EyeOff, Pause, Play, RefreshCw, SkipForward, ThumbsDown, X } from 'lucide-react';
 import type { Instruction, Step } from '../types';
 import { COLLAPSE_AFTER_MS, PRESENTATION, type IslandState } from './states';
 
@@ -29,6 +29,10 @@ export interface GuideIslandProps {
   /** What the session says is going wrong, in the user's language. Empty when
    *  the guide is simply working. */
   stuck?: string;
+  /** Set once the user has said this guidance was wrong and the server blocked
+   *  the session. There is no step to show any more, only what happened next. */
+  blocked?: string;
+  onReportIncorrect?: (said: string) => void;
   onStartWatching?: () => void;
   onStopWatching?: () => void;
   onReplan?: () => void;
@@ -54,12 +58,16 @@ export function GuideIsland(props: GuideIslandProps) {
   const presentation = PRESENTATION[state];
   const [expanded, setExpanded] = useState(true);
   const [held, setHeld] = useState(false);
+  // Reporting wrong guidance blocks the session, so it takes two presses. The
+  // first one only reveals what the second will do.
+  const [reporting, setReporting] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
 
   // Ordinary progress collapses back to the logo; anything awaiting a decision
   // stays open, and so does anything the user is currently reading.
   useEffect(() => {
     setExpanded(true);
+    setReporting(false);
   }, [step?.id, state, asking, correction]);
   useEffect(() => {
     if (!expanded || presentation.sticky || held) return;
@@ -101,7 +109,13 @@ export function GuideIsland(props: GuideIslandProps) {
         </button>
       </div>
 
-      {step ? <>
+      {props.blocked ? <div className="island-blocked" role="status">
+        <p>{props.blocked}</p>
+        <small>
+          Nothing is pointing at your screen. Share a fresh screenshot when you
+          want to pick this task up again.
+        </small>
+      </div> : step ? <>
         <h3>{step.title}</h3>
         <p className="island-action">{action}</p>
         {where && <p className="island-where">{where}</p>}
@@ -146,6 +160,19 @@ export function GuideIsland(props: GuideIslandProps) {
           </button>
           <small>What you have already done is kept. Only the rest is replaced.</small>
         </div>}
+        {step && props.onReportIncorrect && (reporting
+          ? <div className="island-report" role="group" aria-label="Report wrong guidance">
+              <p>This stops the guide and switches watching off. Your task is kept.</p>
+              <div className="island-answers">
+                <button className="primary" onClick={() => props.onReportIncorrect?.(
+                  'The user said this guidance was wrong.',
+                )}>Yes, this is wrong</button>
+                <button className="text-button" onClick={() => setReporting(false)}>Keep going</button>
+              </div>
+            </div>
+          : <button className="text-button island-report-start" onClick={() => setReporting(true)}>
+              <ThumbsDown size={14} /> This guidance is wrong
+            </button>)}
         {props.watchNotice && <p className="island-watch-notice" role="status">{props.watchNotice}</p>}
         {watching
           ? <div className="island-watching">

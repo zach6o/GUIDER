@@ -1,5 +1,52 @@
 # 19 · Implementation status and session handoff
 
+## Measuring the failure mode that matters: 2026-09-14
+
+`ADVANCE_AT = 0.85` has been a hypothesis since PR-13, and doc 20 calls advancing
+past a step the user has not done the principal failure mode. There was no way to
+find out how often it happened, because the only signal — the user saying the
+guidance was wrong — had nowhere to go. Doc 07's feedback route existed on paper
+and nothing implemented it.
+
+`POST /sessions/{id}/feedback` implements it, with the consequences doc 05
+attaches rather than a softer version. `helpful`, `unhelpful` and
+`privacy_concern` are opinions and change nothing. `incorrect_guidance` names a
+step — without one it is refused, because there is nothing to withdraw and
+nothing to learn — and then does all four things doc 05 lists: the ready
+instruction becomes `invalidated`, a `passed` visual result for that step becomes
+a `mismatch` with the step back to `pending` and its `verified_at` cleared,
+watching is revoked through the existing epoch-bumping stop, and the session
+blocks with its checkpoint saved. A `user_reported` result is deliberately left
+alone: the user is contradicting Guider there, not themselves.
+
+`app/guide/calibration.py` reads what that produces. It folds `observation.tick`,
+`verification.completed` and `verification.contradicted` events into counts per
+0.05 confidence band — advances, asks, waits, and advances the user contradicted
+— and prints what moving the line to 0.75 through 0.95 would have done to the
+ticks actually recorded. `uv run python -m scripts.calibration <owner_id>` prints
+it; it is an engineering instrument, not a product surface, so it is a script and
+not a route.
+
+Two limits are in the code and in the report's own wording rather than left to be
+discovered. Events expire after seven days, so a report is a window and not a
+history. And an advance nobody contradicted is `unchallenged`, never confirmed:
+most users will never file feedback, so `contradicted / advances` would read as an
+error rate while being nothing of the kind. The contradicted verification's id
+and confidence are copied onto the feedback row because the verification expires
+and the finding should not.
+
+In the island the control asks before it acts — one press reveals what it costs,
+a second sends it — because it ends the running guide. Afterwards the island
+shows what happened and stops pointing at anything, and the browser demo mirrors
+the same three effects it can have without a backend.
+
+D05 is not resolved by this. It is now answerable with counts rather than
+opinion, once there are real sessions to count; the held-out evaluation corpus
+T31 asks for still does not exist.
+
+Current verification: 328 backend tests pass and 2 skip on SQLite, 108 web unit
+tests pass, and 44 browser scenarios pass in installed Chrome.
+
 ## The record catches up with the code: 2026-09-14
 
 No behaviour changed here. The migration in [20](20-guide-engine-migration-plan.md) is merged

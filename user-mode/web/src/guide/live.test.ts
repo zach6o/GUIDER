@@ -127,3 +127,37 @@ describe('a guide that is going nowhere', () => {
     expect(stuckMessage('no_progress')).toContain('taking longer');
   });
 });
+
+describe('saying the guidance was wrong', () => {
+  const running = reduce({ type: 'start' }, { type: 'instruction', current: published() });
+
+  it('stops showing a step, because the server withdrew the pointer', () => {
+    const blocked = liveReducer(running, {
+      type: 'blocked', message: 'Guider has stopped watching.',
+    });
+    expect(blocked.phase).toBe('blocked');
+    expect(blocked.step).toBeNull();
+    expect(blocked.instruction).toBeNull();
+    expect(blocked.blocked).toBe('Guider has stopped watching.');
+    expect(islandStateFor(blocked)).toBe('error');
+  });
+
+  it('clears a question and a stuck notice that were about the old step', () => {
+    const asking = reduce(
+      { type: 'start' },
+      { type: 'instruction', current: published() },
+      { type: 'stuck', reason: 'repeated_attempts' },
+      { type: 'claimed', claimId: 'claim-1' },
+    );
+    const blocked = liveReducer(asking, { type: 'blocked', message: 'Stopped.' });
+    expect(blocked.claimId).toBeNull();
+    expect(blocked.askedBy).toBeNull();
+    expect(blocked.stuck).toBe('');
+  });
+
+  it('reads as stopped even while the guide was paused', () => {
+    const paused = liveReducer(running, { type: 'pause' });
+    expect(islandStateFor(liveReducer(paused, { type: 'blocked', message: 'Stopped.' })))
+      .toBe('error');
+  });
+});

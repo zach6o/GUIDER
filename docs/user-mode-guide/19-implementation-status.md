@@ -1,5 +1,53 @@
 # 19 · Implementation status and session handoff
 
+## A way back from blocked: 2026-09-14
+
+A guide could be stopped four ways — pause, the safety guard, a failed
+instruction, and since PR-20 the user saying the guidance was wrong — and
+resumed none of them. `blocked` was a polite word for abandoned, and PR-20 made
+that worse by giving users a button that reached it. Doc 07 had specified both
+routes back since the beginning; neither existed.
+
+`POST /sessions/{id}/resume` implements doc 05's resume row. It works only from
+`paused` or `blocked`, refuses with `context_review_required` until the user
+confirms they have looked at where the task got to, and returns to the recorded
+checkpoint — rebuilt from whether a plan is confirmed when the checkpoint is not
+a resumable state. No screen permission is restored, ever: `mode: window` returns
+the session to `awaiting_screen_permission` so being watched again is a fresh
+decision with its own notice. When the instruction was withdrawn — which is what
+`incorrect_guidance` does — resume re-requests one rather than returning the user
+to an empty island, and hands back the Operation to follow.
+
+`POST /sessions/{id}/steps/{step_id}/retries` asks for the current step in
+different words. It is not a claim, a skip or a verification, and it changes
+nothing about the step except its attempt count. That count is the point: the
+stuck detector already reads it, so a step reworded twice reports itself as going
+nowhere and offers a replan. Past three attempts the route refuses with
+`retry_limit` and says to ask for a different plan instead; a step the guard
+blocked is refused first, because no number of attempts turns a step Guider will
+not explain into one it will.
+
+Two bugs fell out of wiring the island to this.
+
+The first was mine, from PR-20's era: `useLiveGuide` exposes `session` as a value
+captured when the page rendered, and `App` was handing that snapshot back through
+`setSession` after an action had already moved the session on. The next request
+then carried a stale `expected_version` and was refused. The hook now refuses to
+adopt a session older than the one it holds.
+
+The second was in the reducer: a new instruction cleared the stuck notice,
+because a new instruction used to mean a new step. A retry publishes a new
+instruction for the *same* step, so asking twice raised the notice and then wiped
+it in the same breath. Being stuck is about the step, so the notice now survives
+a rewording and clears only when the step actually changes.
+
+A resume that fails now says so in the island. There is no step on screen to
+carry the message at that point, and a button that silently does nothing is worse
+than one that explains itself.
+
+Current verification: 348 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 51 browser scenarios pass in installed Chrome.
+
 ## A way to make a real provider request: 2026-09-14
 
 Every provider answer in the suite is a recorded shape replayed through an

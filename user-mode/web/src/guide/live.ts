@@ -50,6 +50,7 @@ export type LiveAction =
   | { type: 'stuck'; reason: string }
   | { type: 'not_yet' }
   | { type: 'blocked'; message: string }
+  | { type: 'resumed' }
   | { type: 'finished' }
   | { type: 'failed'; message: string }
   | { type: 'pause' }
@@ -69,7 +70,9 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
         ...state, phase: 'waiting', instruction: action.current.instruction,
         step: action.current.step, claimId: null, askedBy: null, error: '',
         // A new step is a fresh start: whatever was stuck was about the old one.
-        stuck: '',
+        // The same step reworded is not — being stuck is about the step, so a
+        // retry must not wipe the notice that the retry itself just raised.
+        stuck: state.step?.id === action.current.step.id ? state.stuck : '',
       };
     case 'preparing':
       // The step stays on screen until the next instruction replaces it, so the
@@ -100,6 +103,12 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
       return {
         ...state, phase: 'blocked', blocked: action.message, instruction: null, step: null,
         claimId: null, askedBy: null, correction: '', stuck: '',
+      };
+    case 'resumed':
+      // Back from blocked or paused. The step arrives on the event stream when
+      // the engine has one, so this only clears what the stop left behind.
+      return {
+        ...state, phase: 'preparing', blocked: '', error: '', correction: '', paused: false,
       };
     case 'failed':
       return { ...state, phase: 'error', error: action.message };
@@ -149,6 +158,11 @@ export interface LiveGuide {
   /** Say the current guidance was wrong. Expensive by design (doc 05): the
    *  pointer is withdrawn, watching is revoked and the session blocks. */
   reportIncorrect: (said: string) => Promise<void>;
+  /** Pick a blocked or paused task back up. Nothing about watching comes back
+   *  with it: that is a fresh decision with its own notice. */
+  resumeGuide: () => Promise<void>;
+  /** Ask for this step in different words. Not a claim, not a skip. */
+  retry: (said: string) => Promise<void>;
   /** Ask for a replacement plan for whatever is left. Resolves with the
    *  operation to follow, or null when there is nothing to replan. */
   replan: () => Promise<string | null>;
@@ -169,7 +183,18 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
   const following = useRef<AbortController | null>(null);
   const running = useRef(false);
 
-  useEffect(() => { current.current = session; }, [session]);
+  // Never adopt an older session than the one already held. `session` is a prop
+  // captured when the page rendered, so a caller that hands back what it read
+  // there — after a claim, a report or a resume has already moved the session on
+  // — would otherwise push this guide backwards and the next request would be
+  // refused for a stale version.
+  useEffect(() => {
+    const held = current.current;
+    if (!session || !held || session.id !== held.id
+      || session.state_version > held.state_version) {
+      current.current = session;
+    }
+  }, [session]);
   useEffect(() => () => following.current?.abort(), []);
 
   const fail = useCallback((error: unknown) => {
@@ -293,6 +318,27 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
     });
   }), [act, api, state.step]);
 
+  const resumeGuide = useCallback(() => act(async () => {
+    const session = current.current;
+    if (!session) return;
+    const resumed = await api.resume(session, 'screenshot_only');
+    current.current = resumed.session;
+    dispatch({ type: 'resumed' });
+    // The stream was dropped when the session stopped, so start listening again
+    // before the fresh instruction is published.
+    follow(session.id);
+  }), [act, api, follow]);
+
+  const retry = useCallback((said: string) => act(async () => {
+    const session = current.current;
+    const step = state.step;
+    if (!session || !step || state.paused) return;
+    const pending = await api.retryStep(session, step.id, said);
+    current.current = pending.session;
+    // The same step, in different words. Nothing about it has moved.
+    dispatch({ type: 'preparing' });
+  }), [act, api, state.step, state.paused]);
+
   const replan = useCallback(async (): Promise<string | null> => {
     const session = current.current;
     if (!session) return null;
@@ -330,6 +376,7 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
 
   return {
     state, session: current.current, awaitingAction,
-    start, claim, answer, skip, observerAsked, reportIncorrect, replan, togglePause, close,
+    start, claim, answer, skip, observerAsked, reportIncorrect, resumeGuide, retry, replan,
+    togglePause, close,
   };
 }

@@ -117,8 +117,17 @@ describe('a guide that is going nowhere', () => {
 
   it('forgets it once the guide is on a different step', () => {
     const stuck = liveReducer(running, { type: 'stuck', reason: 'no_progress' });
-    const moved = liveReducer(stuck, { type: 'instruction', current: published({ ordinal: 2 }) });
+    const moved = liveReducer(stuck, {
+      type: 'instruction', current: published({ id: 'step-2', ordinal: 2 }),
+    });
     expect(moved.stuck).toBe('');
+  });
+
+  it('keeps it when the same step is only reworded', () => {
+    const stuck = liveReducer(running, { type: 'stuck', reason: 'repeated_attempts' });
+    // A retry publishes a new instruction for the step the user is still on.
+    const reworded = liveReducer(stuck, { type: 'instruction', current: published() });
+    expect(reworded.stuck).toBe('repeated_attempts');
   });
 
   it('puts the session reason into words without inventing a cause', () => {
@@ -159,5 +168,32 @@ describe('saying the guidance was wrong', () => {
     const paused = liveReducer(running, { type: 'pause' });
     expect(islandStateFor(liveReducer(paused, { type: 'blocked', message: 'Stopped.' })))
       .toBe('error');
+  });
+});
+
+describe('picking a stopped task back up', () => {
+  const blocked = reduce(
+    { type: 'start' },
+    { type: 'instruction', current: published() },
+    { type: 'blocked', message: 'Guider has stopped watching.' },
+  );
+
+  it('waits for the engine rather than showing the old step again', () => {
+    const resumed = liveReducer(blocked, { type: 'resumed' });
+    expect(resumed.phase).toBe('preparing');
+    expect(resumed.blocked).toBe('');
+    expect(islandStateFor(resumed)).toBe('thinking');
+  });
+
+  it('lifts a pause, because resuming is the user asking to continue', () => {
+    const paused = liveReducer(blocked, { type: 'pause' });
+    expect(liveReducer(paused, { type: 'resumed' }).paused).toBe(false);
+  });
+
+  it('clears an error left over from whatever stopped the guide', () => {
+    const failed = liveReducer(blocked, { type: 'failed', message: 'Could not reach Guider.' });
+    const resumed = liveReducer(failed, { type: 'resumed' });
+    expect(resumed.error).toBe('');
+    expect(islandStateFor(resumed)).not.toBe('error');
   });
 });

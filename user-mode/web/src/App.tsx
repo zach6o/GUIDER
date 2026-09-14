@@ -351,6 +351,12 @@ export default function App() {
     setSession(live.session);
   }
 
+  async function resumeGuide() {
+    await live.resumeGuide();
+    setSession(live.session);
+    setNotice('Picked up where the task left off. Watching is still off.');
+  }
+
   function stopMirroring(reason = '') {
     mirror.current.stop();
     setMirroring(false);
@@ -612,6 +618,8 @@ export default function App() {
       stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
       blocked={live.state.blocked}
       onReportIncorrect={said => void reportIncorrect(said)}
+      onResume={() => void resumeGuide()}
+      onRetry={said => void live.retry(said)}
       onReplan={() => void askForNewPlan()}
       onFinish={() => void finishTask()}
       framesObserved={framesObserved}

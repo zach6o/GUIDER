@@ -105,6 +105,13 @@ export interface FeedbackRecorded {
   verification_withdrawn: boolean;
 }
 
+export interface Resumed {
+  session: Session;
+  /** Set when the guide needs a fresh instruction before anything waits on the
+   *  user: a resume after the pointer was withdrawn. */
+  next_operation_id: string | null;
+}
+
 export interface GuideApi {
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
   importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
@@ -134,4 +141,6 @@ export interface GuideApi {
   stopWatching(id: string): Promise<ObservationState>;
   observe(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ObservationTick>;
   reportIncorrect(session: Session, stepId: string, text: string): Promise<FeedbackRecorded>;
+  resume(session: Session, mode: 'screenshot_only' | 'window'): Promise<Resumed>;
+  retryStep(session: Session, stepId: string, reason: string): Promise<{ operation_id: string; session: Session }>;
 }

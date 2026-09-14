@@ -524,6 +524,16 @@
                 "type": "null"
               }
             ]
+          },
+          "mark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Mark"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1628,6 +1638,53 @@
           "created_at"
         ],
         "title": "Instruction"
+      },
+      "Mark": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "circle",
+              "underline",
+              "spotlight",
+              "pointer"
+            ],
+            "title": "Kind"
+          },
+          "box": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Box"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "box",
+          "label"
+        ],
+        "title": "Mark",
+        "description": "Where to point, in normalised frame coordinates.\n\n`0..1` against the frame the observer read, never pixels: the renderer\nmultiplies by whatever surface it draws into, so the same payload works on a\nmirrored preview now and a native overlay later."
       },
       "Observation": {
         "properties": {

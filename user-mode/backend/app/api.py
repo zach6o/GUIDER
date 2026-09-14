@@ -20,6 +20,7 @@ from app.guide.context import save as save_context
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.feedback import record as record_feedback
 from app.guide.guard import vet_observation
+from app.guide.marks import mark_for
 from app.guide.observation import (
     MAX_OBSERVATION_CALLS,
     NOTICE_VERSION,
@@ -1209,6 +1210,10 @@ async def observe_context(
             session=s.Session.model_validate(session),
             action=decision.action,
             message=decision.message,
+            mark=(
+                s.Mark(kind=found.kind, box=found.box, label=found.label)
+                if (found := mark_for(instruction, context)) else None
+            ),
             offer=s.SkipOffer(
                 step_ids=[UUID(value) for value in decision.skippable],
                 titles=[row.title for row in later if row.id in set(decision.skippable)],

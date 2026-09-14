@@ -1,5 +1,44 @@
 # 19 · Implementation status and session handoff
 
+## Five more providers, and somewhere safe to keep a key: 2026-09-14 · V2.4
+
+OpenRouter, Groq, DeepSeek, Ollama and LM Studio all speak the OpenAI
+chat-completions request, so `app/providers/compatible.py` is one adapter with
+five subclasses that declare a base URL, an auth style, a name and a model list.
+Writing five would have been writing one five times and keeping five places for
+the same bug. A service needing a different request shape would be its own
+adapter rather than a conditional about who is answering. All five serve the
+engine roles including `observe_context`, so choosing one is a real choice.
+
+`local = True` is enforced, not annotated. A local adapter refuses a non-loopback
+host outright and sends no credential; a remote one refuses plain HTTP. A user
+who chose a local provider chose that their screen stays on their machine, and a
+"local" provider quietly pointed at someone else's server would be the worst kind
+of privacy failure — the one the user believed they had ruled out. Neither check
+can be a warning.
+
+`app/crypto.py` gives a provider key somewhere defensible to live: envelope
+encryption, a fresh data key per credential, the data key wrapped by a root, the
+owner's id as authenticated data so a row lifted into another account fails to
+decrypt rather than opening into someone else's provider. Rotation re-wraps the
+data key and never touches the ciphertext the user's key sits in.
+
+**The limit is stated rather than glossed:** the root lives in configuration, not
+a key management service. That is better than plaintext in a column and worse
+than a KMS, because whoever can read the configuration can read the keys. The
+shape is deliberately the one a KMS drops into — two functions change — so
+closing D02 is a substitution, not a rewrite. Every decryption failure returns the
+same message, because a caller that could tell a wrong key from tampered bytes
+from the wrong owner would be an oracle.
+
+Not proven: no real request has been made to any of these five, exactly as with
+Anthropic. Every answer in the suite is a recorded shape through an injected
+transport, and the phase-4 source gate still passes — nothing outside
+`app/providers/` names a provider.
+
+Current verification: 465 backend tests pass and 12 skip on SQLite, 137 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
 ## Pointing, and noticing nobody is there: 2026-09-14 · V2.3
 
 **Marks are derived, not asked for — a deliberate departure from doc 22.** The

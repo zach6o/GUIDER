@@ -13,6 +13,7 @@ from app.errors import GuideError
 from app.providers.anthropic import MODELS as CLAUDE_MODELS
 from app.providers.anthropic import AnthropicClaude
 from app.providers.base import CapabilityDescriptor, Role
+from app.providers.compatible import DeepSeek, Groq, LMStudio, Ollama, OpenRouter
 from app.providers.fixture import FixtureProvider
 from app.providers.openai import MODELS as OPENAI_MODELS
 from app.providers.openai import OpenAIVision
@@ -60,6 +61,40 @@ ANTHROPIC = CapabilityDescriptor(
     models=CLAUDE_MODELS,
     default_model=CLAUDE_MODELS[0],
 )
+
+
+# Every service behind `app/providers/compatible.py`, described once. The
+# adapter class is the only thing that knows a vendor's name; this table is what
+# the registry selects on.
+ENGINE_ROLES = frozenset({"observe", "observe_context", "plan", "instruct", "import"})
+
+
+def _compatible(adapter, cost: str, local: bool = False) -> CapabilityDescriptor:
+    return CapabilityDescriptor(
+        id=adapter.__name__.lower(),
+        display_name=adapter.name,
+        roles=ENGINE_ROLES,
+        vision=True,
+        structured_output="json_schema",
+        max_image_px=2560,
+        cost_tier=cost,  # type: ignore[arg-type]
+        byok_only=not local,
+        local=local,
+        models=adapter.models,
+        default_model=adapter.models[0],
+    )
+
+
+COMPATIBLE: dict[str, tuple[CapabilityDescriptor, type]] = {
+    adapter.__name__.lower(): (_compatible(adapter, cost, local), adapter)
+    for adapter, cost, local in (
+        (OpenRouter, "standard", False),
+        (Groq, "cheap", False),
+        (DeepSeek, "cheap", False),
+        (Ollama, "cheap", True),
+        (LMStudio, "cheap", True),
+    )
+}
 
 
 class ProviderRegistry:
@@ -135,14 +170,24 @@ def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
     registry.register(FIXTURE, FixtureProvider)
     registry.register(OPENAI, OpenAIVision)
     if settings is not None and settings.provider_api_key is not None:
-        configured = {ANTHROPIC.id: AnthropicClaude}.get(settings.provider_id)
+        configured = {
+            ANTHROPIC.id: AnthropicClaude,
+            **{key: value[1] for key, value in COMPATIBLE.items()},
+        }.get(settings.provider_id)
         if configured is None:
             raise GuideError(
                 503,
                 "dependency_unavailable",
                 "No provider is configured for this capability.",
             )
-        descriptor = ANTHROPIC
+        # The descriptor belongs to whichever adapter was configured, not to a
+        # hardcoded one: registering Claude's capabilities for a Groq connection
+        # would offer models that service has never heard of.
+        descriptor = (
+            ANTHROPIC
+            if settings.provider_id == ANTHROPIC.id
+            else COMPATIBLE[settings.provider_id][0]
+        )
         registry.register(
             descriptor,
             partial(

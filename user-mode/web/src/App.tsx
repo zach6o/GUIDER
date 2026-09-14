@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
   ClipboardPaste, Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
   ListChecks, LogOut, MonitorUp, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal,
   Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
-import { LiveGuide } from './LiveGuide';
+// The live screen guide pulls in the practice demo, the capture stack and the
+// frame encoder — a third of the bundle for a page most visits never open. It
+// loads when someone actually asks for it.
+const LiveGuide = lazy(() => import('./LiveGuide').then(module => ({ default: module.LiveGuide })));
 import { prepareImage } from './image';
 import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, type FloatingWindow } from './overlay/pip';
@@ -99,6 +102,15 @@ export default function App() {
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
   useEffect(() => () => { mirror.current.stop(); }, []);
+  // Watching must not outlive the page that is doing it. Without this, a crash
+  // that unmounts the tree — or a navigation away — leaves the loop encoding
+  // frames for a guide nobody is looking at, which is exactly what the error
+  // page promises has not happened.
+  useEffect(() => () => {
+    watcher.current?.halt();
+    watcher.current = null;
+    capture.current.stop();
+  }, []);
 
   async function openSummary(item: HistoryItem) {
     await work('Opening…', async () => {
@@ -502,7 +514,9 @@ export default function App() {
         {error && <div className="message error" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>}
         {notice && <div className="message notice" role="status"><Check size={17} />{notice}</div>}
         <div className="sr-only" role="status">{busy}</div>
-        {page === 'live' && <LiveGuide onSharingChange={setSharing} />}
+        {page === 'live' && <Suspense fallback={
+          <div className="loading-page" role="status">Loading the screen guide…</div>
+        }><LiveGuide onSharingChange={setSharing} /></Suspense>}
 
         {page === 'home' && <div className="home-content">
           <section className="welcome"><div className="eyebrow"><span className="small-line" /> A LITTLE DIRECTION GOES A LONG WAY</div><h1>What would you<br />like to <span>figure out?</span></h1><p>A confusing error. A new tool. That one thing that won’t work.<br className="desktop-break" /> Let’s take it one step at a time.</p></section>

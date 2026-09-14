@@ -7,12 +7,14 @@
  * supported layout rather than a degraded one, so nothing here may throw.
  */
 
-interface PictureInPictureApi {
+export interface PictureInPictureApi {
   requestWindow(options: { width: number; height: number }): Promise<Window>;
   window: Window | null;
 }
 
-function api(): PictureInPictureApi | null {
+/** The one place this capability is detected. `overlay/surface.ts` asks here
+ *  rather than looking again, so the offer and the attempt cannot disagree. */
+export function api(): PictureInPictureApi | null {
   const candidate = (window as unknown as { documentPictureInPicture?: PictureInPictureApi })
     .documentPictureInPicture;
   return candidate && typeof candidate.requestWindow === 'function' ? candidate : null;

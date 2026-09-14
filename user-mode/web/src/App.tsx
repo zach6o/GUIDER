@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
   ClipboardPaste, Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
-  ListChecks, LogOut, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal, Trash2, X, Zap } from 'lucide-react';
+  ListChecks, LogOut, MonitorUp, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal,
+  Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
 import { LiveGuide } from './LiveGuide';
 import { prepareImage } from './image';
 import { GuideIsland } from './overlay/GuideIsland';
-import { closeFloatingWindow, openFloatingWindow, pipSupported, type FloatingWindow } from './overlay/pip';
+import { closeFloatingWindow, openFloatingWindow, type FloatingWindow } from './overlay/pip';
+import {
+  defaultSurface, fallbackNotice, MIRROR_NOTE, surfaceOptions, type GuideSurface,
+} from './overlay/surface';
 import type { IslandState } from './overlay/states';
 import { islandStateFor, stuckMessage, useLiveGuide } from './guide/live';
 import { Watcher } from './guide/watching';
@@ -62,12 +66,19 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [signedIn, setSignedIn] = useState(isDemo);
   const [authOpen, setAuthOpen] = useState(false);
+  const [surface, setSurface] = useState<GuideSurface>(defaultSurface);
+  const [mirroring, setMirroring] = useState(false);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const watchVideo = useRef<HTMLVideoElement>(null);
+  const mirrorVideo = useRef<HTMLVideoElement>(null);
   const capture = useRef(new ScreenCapture());
+  // Its own capture, kept apart from the observation one on purpose: mirroring
+  // is a layout choice and watching is a consent decision, and sharing one
+  // stream between them would quietly make the first imply the second.
+  const mirror = useRef(new ScreenCapture());
   const watcher = useRef<Watcher | null>(null);
   const goalInput = useRef<HTMLTextAreaElement>(null);
   const generation = useRef(0);
@@ -85,6 +96,7 @@ export default function App() {
   }, [signedIn, page, task]);
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
+  useEffect(() => () => { mirror.current.stop(); }, []);
 
   async function openSummary(item: HistoryItem) {
     await work('Opening…', async () => {
@@ -339,23 +351,55 @@ export default function App() {
     setSession(live.session);
   }
 
+  function stopMirroring(reason = '') {
+    mirror.current.stop();
+    setMirroring(false);
+    if (reason) setNotice(reason);
+  }
+
   function stopGuiding() {
     void stopWatching('Watching stopped with the guide.');
+    stopMirroring();
     live.close();
     setGuiding(false);
     setFloating((current: FloatingWindow | null) => { closeFloatingWindow(current); return null; });
   }
-  async function startGuiding(floatingRequested = false) {
+
+  /** The floating window is one of three supported surfaces, not the real one
+   *  with two consolation prizes (ADR-016). Whichever the user picked, a surface
+   *  that cannot open falls back to the page and says so rather than silently
+   *  producing something else. */
+  async function startGuiding(chosen: GuideSurface = surface) {
     setGuiding(true);
-    // The floating window is a deliberate choice, never the default: on the page
-    // is a supported shape, and it is the only one Safari and Firefox have.
-    if (floatingRequested) {
+    setNotice('');
+    if (chosen === 'floating') {
       // Must stay inside the click: the window will not open after an await.
-      setFloating(await openFloatingWindow(() => {
-        setFloating(null); setGuiding(false); live.close();
-      }));
+      const opened = await openFloatingWindow(returnToPage);
+      setFloating(opened);
+      if (!opened) setNotice(fallbackNotice('floating', 'declined'));
+    }
+    if (chosen === 'mirror') {
+      try {
+        const stream = await mirror.current.start(reason => stopMirroring(reason));
+        if (stream && mirrorVideo.current) {
+          mirrorVideo.current.srcObject = stream;
+          setMirroring(true);
+        } else if (!stream) {
+          setNotice(fallbackNotice('mirror', 'declined'));
+        }
+      } catch (problem) {
+        setNotice(problem instanceof Error ? problem.message : fallbackNotice('mirror', 'declined'));
+      }
     }
     await live.start();
+  }
+
+  /** Closing the floating window puts the guide back on the page. It used to end
+   *  the session, which made a window control into a way to lose your place. */
+  function returnToPage() {
+    setFloating(null);
+    setSurface('page');
+    setNotice('The floating window closed. Your guide is on the page.');
   }
   async function confirmPlan() {
     if (!plan || !session) return;
@@ -484,9 +528,30 @@ export default function App() {
                 {openStep === step.id && <div className="plan-why"><p>{step.explanation}</p>{step.fallback && <p><strong>If that doesn’t work:</strong> {step.fallback}</p>}</div>}</>}
             </div>
           </li>)}</ol>
+          {plan.status === 'confirmed' && <section className="surface-choice" aria-label="Where the guide should sit">
+            <span className="eyebrow">WHERE THE GUIDE SITS</span>
+            <div className="surface-options" role="radiogroup" aria-label="Guide surface">
+              {surfaceOptions().map(option => <button
+                key={option.id}
+                role="radio"
+                aria-checked={surface === option.id}
+                aria-describedby={option.available ? undefined : `surface-why-${option.id}`}
+                className={`surface-option${surface === option.id ? ' selected' : ''}`}
+                disabled={!option.available || !!busy || guiding}
+                onClick={() => setSurface(option.id)}
+              >
+                <strong>{option.label}</strong>
+                <small>{option.description}</small>
+                {/* Named with its reason rather than hidden: a mode this browser
+                    lacks is still part of the product. */}
+                {!option.available && <em id={`surface-why-${option.id}`}>{option.reason}</em>}
+              </button>)}
+            </div>
+            {surface === 'mirror' && <p className="surface-note"><ShieldCheck size={14} /> {MIRROR_NOTE}</p>}
+          </section>}
           <section className="plan-actions">
             {plan.status === 'confirmed'
-              ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><div className="plan-buttons">{pipSupported() && <button className="text-button" disabled={!!busy || guiding} onClick={() => void startGuiding(true)}>Open in a floating window</button>}<button className="primary" disabled={!!busy || guiding} onClick={() => void startGuiding()}>{guiding ? 'Guide running' : 'Start the steps'} <ArrowRight size={16} /></button></div></>
+              ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><div className="plan-buttons"><button className="primary" disabled={!!busy || guiding} onClick={() => void startGuiding()}>{guiding ? 'Guide running' : 'Start the steps'} <ArrowRight size={16} /></button></div></>
               : <><div><strong>Happy with these steps?</strong><small>Confirming records the version. You can ask for a different plan instead.</small></div><div className="plan-buttons"><button className="text-button" disabled={!!busy} onClick={() => void buildPlan()}>Suggest a different plan</button><button className="primary" disabled={!!busy} onClick={() => void confirmPlan()}>{busy ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <>Confirm this plan <Check size={17} /></>}</button></div></>}
           </section>
           <p className="privacy-note"><ShieldCheck size={14} /> A plan is a suggestion. Guider never performs these steps for you.</p>
@@ -520,6 +585,20 @@ export default function App() {
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
     </div>
+    {guiding && <section
+      className={mirroring ? 'guide-mirror on' : 'guide-mirror'}
+      aria-label="Your mirrored window"
+      hidden={!mirroring}
+    >
+      <div className="guide-mirror-head">
+        <span><MonitorUp size={15} /> Your window, mirrored here</span>
+        <button className="text-button" onClick={() => stopMirroring('Mirroring stopped.')}>
+          Stop mirroring
+        </button>
+      </div>
+      <video ref={mirrorVideo} muted autoPlay playsInline aria-label="Mirrored window" />
+      <p className="surface-note"><ShieldCheck size={14} /> {MIRROR_NOTE}</p>
+    </section>}
     {guiding && plan && <GuideIsland
       state={islandState}
       step={activeStep}

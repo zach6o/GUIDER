@@ -160,7 +160,11 @@ async def test_a_whole_plan_can_be_self_reported_without_claiming_success(harnes
 # --- refusals -------------------------------------------------------------
 
 
-async def test_evidence_is_refused_rather_than_quietly_downgraded(harness):
+async def test_evidence_that_does_not_exist_verifies_nothing(harness):
+    """The evidence arm exists now (`tests/test_evidence.py`), so this route no
+    longer refuses evidence outright. What it must still never do is treat an
+    unusable reference as a self-report: an image that is not this owner's is not
+    found, and nothing is recorded."""
     _, session, current = await started(harness)
     claimed = await claim(harness, session, current["step"]["id"])
     session = await session_state(harness, session["id"])
@@ -171,8 +175,7 @@ async def test_evidence_is_refused_rather_than_quietly_downgraded(harness):
         claimed["claim_id"],
         evidence_ids=[str(uuid4())],
     )
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "evidence_required"
+    assert response.status_code == 404
 
     async with harness.app.state.sessions() as db:
         assert await db.scalar(select(m.VerificationResult)) is None

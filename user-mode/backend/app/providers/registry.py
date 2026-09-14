@@ -23,7 +23,7 @@ if TYPE_CHECKING:  # a registry that imported Settings at runtime would invert
 FIXTURE = CapabilityDescriptor(
     id="fixture",
     display_name="Deterministic fixture",
-    roles=frozenset({"analyze", "plan", "instruct", "observe", "import"}),
+    roles=frozenset({"analyze", "plan", "instruct", "observe", "observe_context", "import"}),
     vision=False,
     structured_output="none",
     max_image_px=8192,
@@ -50,7 +50,7 @@ OPENAI = CapabilityDescriptor(
 ANTHROPIC = CapabilityDescriptor(
     id="anthropic",
     display_name="Claude",
-    roles=frozenset({"guide", "observe", "plan", "instruct", "import"}),
+    roles=frozenset({"guide", "observe", "observe_context", "plan", "instruct", "import"}),
     vision=True,
     structured_output="native",
     max_image_px=2560,

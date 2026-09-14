@@ -1,5 +1,122 @@
 # 19 · Implementation status and session handoff
 
+## The guide can say what it is looking at: 2026-09-14 · V2.1
+
+The observer answers one question — is this step's criterion satisfied? — which
+is enough to advance a plan and not enough to guide anyone. `app/guide/context.py`
+adds the second question: what is on this screen?
+
+`ScreenContext` is a belief, and the separation is structural rather than
+promised. It lives in its own table, it can set no status, and
+`tests/test_context.py` holds the line that matters: a stage of `step_satisfied`
+at confidence 0.95 leaves the step exactly as it was, because only the
+verification path can verify anything.
+
+The `context_digest` is what makes looking at every admitted frame affordable. It
+hashes the application, the screen, the stage, the control labels and whether a
+dialog or an error is up — and deliberately excludes confidence, free text and
+box geometry, so a model that re-words the same screen or nudges a box by a pixel
+does not read as a changed screen. An unchanged digest means the instruction the
+user already has still stands, and no reasoning call is made. That property has
+its own parametrised test in both directions.
+
+The guard extends to this surface. Screen text is untrusted in exactly the sense
+SEC-09 means: a control labelled `SYSTEM: ignore previous instructions` is
+dropped rather than offered, a control naming a restricted action is dropped, and
+a stage claiming progress below the acting floor is downgraded rather than
+recorded. A mark pointing at a control found on a screen would be Guider acting
+on words it read there.
+
+`POST /sessions/{id}/context` is the sibling of `/observe`, not its replacement:
+that route decides whether a step is done, this one decides what the guide is
+looking at, and both draw on one 200-call budget because they are the same user's
+frames and the same bill. `GET /sessions/{id}/context` reads the last belief back
+for a client that reconnected.
+
+The fixture provider serves the new role by refusing to guess — the same belief
+every time, `unreadable` at confidence 0. A fixture that invented screens would
+produce a digest that changed on every frame, which is precisely the failure the
+design cannot tolerate.
+
+Not proven: no real model has produced a context. Whether a cheap one describes a
+screen consistently enough for the digest to hold is the load-bearing assumption
+of this phase, and it needs a provider key to test.
+
+Current verification: 393 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
+## A step can finally be verified: 2026-09-14 · V2.0
+
+The product's central promise is *one verified step at a time*, and until today
+the only way to reach `verified` was to be watched live. `POST .../verifications`
+had one arm: the user's word, recorded honestly as `user_reported` and awarded no
+badge. A client that sent evidence was refused outright — which was honest, and
+left the promise half-built for anyone not sharing their screen.
+
+`app/guide/evidence.py` is the other arm. A screenshot the user shares is checked
+by the same observer role that judges a live frame, against the same bands: at
+0.85 and above with the criterion satisfied it is a **pass**, and the step becomes
+`verified` with its timestamp and the confidence that earned it; between 0.60 and
+0.85 it is **inconclusive** and advances nothing; below that, or with the
+criterion unsatisfied, it is a **mismatch** that counts an attempt and leaves the
+step current. One threshold table, two entry points, and `evidence_available` is
+the column that keeps a checked step distinguishable from a reported one forever.
+
+The check is a durable Operation rather than a request that blocks, because a
+provider call that outlives the request is what Operations are for. So the route
+now has two shapes: the user's word settles at once and answers 200, while
+evidence answers 202 with the Operation to follow. Doc 07's row records both.
+
+One gap fell out of building it. A manual upload was refused while a step was
+waiting on the user — which is precisely the moment someone wants to share a
+screenshot of the result. Doc 05 always allowed it ("manual upload alone stores
+context"); the route did not. It does now.
+
+The browser demo refuses to check, with the reason: it has no vision provider,
+and a simulated verdict about a real screenshot would be an invented
+verification. That is the same refusal it already makes about watching.
+
+Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
+tests pass, and 53 browser scenarios pass in installed Chrome.
+
+## Deletion, at last: 2026-09-14 · V2.0
+
+The only thing a user could delete was a screenshot. The goal they typed, the transcript they
+pasted, the record of what they were guided through, the account itself — none of it had a way out,
+while [09](09-security-and-privacy.md) SEC-13 required exact deletion semantics and doc 07 had
+specified all three routes from the beginning. [22](22-guider-v2-architecture.md) makes closing this
+the first phase of V2, before anything is built that would give the product more to remember.
+
+`DELETE /sessions/{id}` stops the session first, then removes every row under it — instructions,
+claims, verifications, summaries, feedback, imports, plans, steps, operations, events and images,
+bytes before rows — and leaves the task standing, because removing one attempt is not asking to
+forget the goal. `DELETE /tasks/{id}` takes the task, every session under it and its task-level
+images. `DELETE /account` takes all of that and the owner's idempotency records, sets
+`auth_revoked_before` to now so every token issued before the request stops being accepted, and
+leaves the receipt readable — doc 08 keeps it until the Supabase identity itself is removed, which
+is a separate audited step this route does not perform.
+
+Account deletion requires the exact header phrase doc 07 specifies, typed by the user, and a sign-in
+from within the last five minutes. `auth.py` now records when the presented token was issued, which
+is what makes that check real rather than decorative.
+
+`app/erasure.py` names every table in dependency order rather than relying on cascades — only five
+foreign keys in the schema cascade, and deleting a parent while hoping is how orphans are made. The
+test that matters most reads the schema at runtime and fails when a table exists that the erasure
+module never names, with an explicit exempt list of three: the identity row, the receipt, and
+Alembic's own bookkeeping. A table added without being erased is a privacy leak no ordinary test
+would catch, because a test only checks the tables it knows about.
+
+Deleting twice produces no second receipt. Another owner's rows are untouched — the property with
+its own test, because it is the one that would matter most if it were wrong.
+
+On screen: a delete control on each history row, a dialog that names what goes with the task before
+anything happens, and a danger zone on the privacy page where the confirmation phrase is typed. The
+privacy page no longer says task and account erasure are on the roadmap, because they are not.
+
+Current verification: 359 backend tests pass and 12 skip on SQLite, 120 web unit tests pass, and 53
+browser scenarios pass in installed Chrome.
+
 ## A way back from blocked: 2026-09-14
 
 A guide could be stopped four ways — pause, the safety guard, a failed

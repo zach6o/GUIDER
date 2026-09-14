@@ -474,7 +474,7 @@ class Pending(Schema):
 
 class DeletionReceipt(Schema):
     id: UUID
-    scope: Literal["screenshot"]
+    scope: Literal["screenshot", "session", "task", "account"]
     status: Literal["queued", "purging", "purged", "failed"]
     requested_at: datetime
     online_purge_due_at: datetime
@@ -517,6 +517,47 @@ class RetryRequest(Schema):
 
     expected_version: Annotated[int, Field(ge=1)]
     reason: Annotated[str, Field(max_length=1000)] = ""
+
+
+class ContextTickRequest(Schema):
+    """One admitted frame, for the context observer. Same shape as `/observe`:
+    the browser has already discarded almost everything (ADR-016 tiers 0 and 1)."""
+
+    expected_version: Annotated[int, Field(ge=1)]
+    image_base64: Annotated[str, Field(min_length=1, max_length=6_000_000)]
+    admitted_at: AwareDatetime
+
+
+class SeenControl(Schema):
+    label: str
+    box: tuple[float, float, float, float]
+    kind: str
+
+
+class ContextTick(Schema):
+    """What the guide now believes, and whether it changed anything.
+
+    `instruction_pending` is the field that matters for cost: false means the
+    screen is the same screen as far as guidance is concerned, and no reasoning
+    call was made.
+    """
+
+    stage: Literal[
+        "before_start", "in_progress", "step_satisfied", "later_step_satisfied",
+        "off_track", "blocked_dialog", "unreadable",
+    ]
+    application: str
+    application_matches_expected: bool
+    screen: str
+    dialog: str | None = None
+    error_text: str | None = None
+    controls: list[SeenControl] = []
+    confidence: float
+    digest: str
+    changed: bool
+    note: str = ""
+    observation_calls_remaining: int
+    session: Session
 
 
 class FeedbackRequest(Schema):

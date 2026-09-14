@@ -126,12 +126,16 @@ export interface GuideApi {
   confirmPlan(plan: Plan, session: Session): Promise<{ plan: Plan; session: Session }>;
   operation(id: string): Promise<Operation>;
   deleteImage(id: string): Promise<Receipt>;
+  deleteTask(id: string): Promise<Receipt>;
+  deleteSession(id: string): Promise<Receipt>;
+  deleteAccount(): Promise<Receipt>;
   pause(id: string): Promise<Session>;
   stop(id: string): Promise<Session>;
   start(session: Session): Promise<{ operation_id: string; session: Session }>;
   instruction(id: string): Promise<CurrentInstruction | null>;
   claim(session: Session, stepId: string, statement: string): Promise<Claimed>;
   selfReport(session: Session, stepId: string, claimId: string, said: string): Promise<SelfReported>;
+  checkEvidence(session: Session, stepId: string, claimId: string, screenshotId: string): Promise<{ operation_id: string; session: Session }>;
   skipStep(session: Session, stepId: string, reason: 'not_applicable' | 'already_done' | 'cannot_do'): Promise<Skipped>;
   events(id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<GuideEventPage>;
   complete(session: Session, outcome: 'achieved' | 'user_reported', said: string): Promise<{ session: Session; summary: Summary }>;

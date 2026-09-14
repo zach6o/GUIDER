@@ -22,7 +22,9 @@ from app.schemas import Analysis, Schema
 MODEL = Literal["gpt-4.1-mini", "gpt-4.1"]
 MAX_IMAGE = 4 * 1024 * 1024
 
-Role = Literal["analyze", "guide", "observe", "plan", "instruct", "verify", "import"]
+Role = Literal[
+    "analyze", "guide", "observe", "observe_context", "plan", "instruct", "verify", "import"
+]
 StructuredOutput = Literal["json_schema", "tool", "native", "prompt", "none"]
 CostTier = Literal["cheap", "standard", "capable"]
 
@@ -135,6 +137,64 @@ class ObserveResult(Schema):
     note: str = Field(max_length=200)
 
 
+STAGES = (
+    "before_start",
+    "in_progress",
+    "step_satisfied",
+    "later_step_satisfied",
+    "off_track",
+    "blocked_dialog",
+    "unreadable",
+)
+
+
+class VisibleControl(Schema):
+    """One control the observer says it can see, in normalised frame coordinates.
+
+    `0..1` against the frame, never pixels: the same payload then places a mark on
+    a mirrored preview today and on a native desktop overlay later, across DPI,
+    zoom and monitor changes ([ADR-020](../../../docs/user-mode-guide/adr/020-overlay-surfaces.md)).
+    """
+
+    label: str = Field(min_length=1, max_length=80)
+    box: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    kind: Literal["button", "field", "menu", "tab", "link", "dialog", "other"] = "other"
+
+
+class ContextRequest(Schema):
+    """What the context observer is asked. It sees the current step's testable
+    condition and the application it should be looking at — no history, no goal,
+    no account data."""
+
+    success_criterion: str = Field(min_length=1, max_length=500)
+    expected_result: str = Field(max_length=500)
+    application_key: str = Field(max_length=80)
+    step_title: str = Field(max_length=120)
+    later_titles: list[Annotated[str, Field(max_length=120)]] = Field(max_length=11, default=[])
+
+
+class ScreenContext(Schema):
+    """A belief about the shared window. Never a verification.
+
+    Nothing here can mark a step verified: `stage` is what the guide reads, and a
+    step advances only through the verification path with its own bands
+    ([ADR-019](../../../docs/user-mode-guide/adr/019-context-engine.md)).
+    """
+
+    application: str = Field(max_length=80, default="")
+    application_matches_expected: bool = True
+    screen: str = Field(max_length=120, default="")
+    stage: Literal[STAGES] = "in_progress"  # type: ignore[valid-type]
+    controls: list[VisibleControl] = Field(max_length=12, default=[])
+    dialog: str = Field(max_length=200, default="")
+    error_text: str = Field(max_length=200, default="")
+    #: Which of `later_titles` the screen already satisfies, by index. Only read
+    #: when `stage` is `later_step_satisfied`.
+    satisfied_later_index: int | None = None
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False, default=0.0)
+    note: str = Field(max_length=200, default="")
+
+
 class ImportContext(Schema):
     """A transcript the user pasted, and where they say it came from.
 
@@ -209,6 +269,12 @@ class InstructionWriter(Protocol):
     advance the step or issue a blocked final action (doc 12)."""
 
     async def instruct(self, ctx: InstructionContext) -> ProposedInstruction: ...
+
+
+class ContextObserver(Protocol):
+    """Role `observe_context`: one frame to a belief about what is on screen."""
+
+    async def observe_context(self, ctx: ContextRequest, image: bytes) -> ScreenContext: ...
 
 
 class VisionObserver(Protocol):

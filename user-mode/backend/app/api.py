@@ -11,7 +11,10 @@ from sqlalchemy import func, select
 from app import models as m
 from app import schemas as s
 from app.auth import Db, Owner
+from app.erasure import erase_account, erase_session, erase_task, receipt_for
 from app.errors import GuideError, not_found
+from app.guide.context import request_for, vet_context
+from app.guide.context import save as save_context
 from app.guide.engine import ANALYSIS_STATES, PLAN_STATES, TERMINAL, record_event, transition
 from app.guide.feedback import record as record_feedback
 from app.guide.guard import vet_observation
@@ -44,7 +47,7 @@ from app.guide.steps import (
 from app.guide.summary import require_ending, write_summary
 from app.imports.redact import MAX_TRANSCRIPT, redact
 from app.media import MAX_BYTES, normalize, prepare_frame
-from app.providers.base import ObserveContext
+from app.providers.base import ContextRequest, ObserveContext  # noqa: F401
 from app.service import (
     cancel_pending,
     check_version,
@@ -534,13 +537,17 @@ async def skip(
 
 @router.post(
     "/sessions/{session_id}/steps/{step_id}/verifications",
-    response_model=s.Envelope[s.SelfReported],
+    # Two shapes, because there are two arms: the user's word settles at once and
+    # answers 200, while evidence is checked by a worker and answers 202 with the
+    # Operation to follow.
+    response_model=s.Envelope[s.SelfReported] | s.Envelope[s.Pending],
 )
 async def verify_step(
     session_id: UUID,
     step_id: UUID,
     body: s.VerifyRequest,
     request: Request,
+    response: Response,
     db: Db,
     owner: Owner,
     key: Key,
@@ -562,13 +569,11 @@ async def verify_step(
     if session.state != "awaiting_user_action":
         raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
     if body.evidence_ids:
-        # Not silently ignored: a caller that sent evidence asked for an
-        # objective check, and returning a self-report instead would be a lie.
-        raise GuideError(
-            422,
-            "evidence_required",
-            "Checking a screenshot is not available yet. "
-            "You can tell Guider what happened instead.",
+        # The objective arm. A caller that sent evidence asked for a check, and
+        # now gets one: the observer looks at the still and the bands decide.
+        response.status_code = 202
+        return await check_evidence(
+            session, step, body, request, db, owner, key, request_digest
         )
     if not body.self_report.strip():
         raise GuideError(
@@ -675,6 +680,90 @@ async def feedback(
         verification_withdrawn=recorded.verification_id is not None,
     )
     await remember(db, request, owner.id, str(key), request_digest, result, 201)
+    return envelope(request, result)
+
+
+async def check_evidence(
+    session: m.GuideSession,
+    step: m.TaskStep,
+    body: s.VerifyRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: UUID,
+    request_digest: str,
+):
+    """Accept a screenshot as evidence for the current step.
+
+    Doc 05's `awaiting_user_action -> verifying` row needs accepted new evidence,
+    which is what this validates before anything is queued: the image is this
+    owner's, still usable, and attached to this task. The check itself is a
+    durable Operation, because a provider call that outlives the request is
+    exactly what Operations are for.
+    """
+    if len(body.evidence_ids) != 1:
+        raise GuideError(
+            422, "validation_failed", "Share one screenshot of the result to check."
+        )
+    image = await owned(db, m.ScreenshotRow, str(body.evidence_ids[0]), owner.id)
+    usable(image)
+    if image.task_id != session.task_id:
+        raise GuideError(422, "validation_failed", "That screenshot belongs to another task.")
+
+    claim = await db.scalar(
+        select(m.CompletionClaim).where(
+            m.CompletionClaim.id == str(body.claim_id),
+            m.CompletionClaim.owner_id == owner.id,
+            m.CompletionClaim.session_id == session.id,
+            m.CompletionClaim.step_id == step.id,
+        )
+    )
+    if claim is None:
+        raise not_found()
+    if claim.status != "user_claimed":
+        raise GuideError(
+            409, "invalid_transition", "That confirmation was replaced by a newer one."
+        )
+
+    session.last_user_activity_at = m.now()
+    await transition(db, session, "verifying", "evidence_submitted", request.state.request_id)
+    operation = m.OperationRow(
+        id=m.new_id(),
+        owner_id=owner.id,
+        task_id=session.task_id,
+        session_id=session.id,
+        kind="verify",
+        status="queued",
+        expected_state_version=session.state_version,
+        control_epoch=session.control_epoch,
+        request_digest=request_digest,
+        deadline_at=m.now() + timedelta(seconds=65),
+        expires_at=m.now() + timedelta(hours=24),
+    )
+    db.add(operation)
+    # Flushed before the evidence row: the composite foreign key points at this
+    # operation, and an ordering surprise would fail the whole request.
+    await db.flush()
+    db.add(
+        m.OperationEvidence(
+            operation_id=operation.id,
+            screenshot_id=image.id,
+            owner_id=owner.id,
+            # Which version of that image was checked: replacing it later must not
+            # make an old result look like it described the new pixels.
+            version=image.version,
+        )
+    )
+    await db.flush()
+    await record_event(
+        db,
+        session,
+        "verification.started",
+        request.state.request_id,
+        {"step_id": step.id, "operation_id": operation.id, "evidence_id": image.id},
+    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
+    await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 
 
@@ -953,6 +1042,120 @@ async def observe(
     )
 
 
+@router.post("/sessions/{session_id}/context", response_model=s.Envelope[s.ContextTick])
+async def observe_context(
+    session_id: UUID,
+    body: s.ContextTickRequest,
+    request: Request,
+    db: Db,
+    owner: Owner,
+):
+    """What is on the shared window now.
+
+    The sibling of `/observe`, and deliberately not a replacement for it: that
+    route decides whether a step is done, this one decides what the guide is
+    looking at. Both draw on one budget, because they are the same user's frames
+    and the same bill.
+
+    Nothing here advances a step. The answer is a belief with a digest, and the
+    digest is what the client uses to know that the instruction it already has
+    still stands ([ADR-019](../../../docs/user-mode-guide/adr/019-context-engine.md)).
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    check_version(session, body.expected_version)
+    if not session.observation_active:
+        raise GuideError(403, "observation_off", "Watching is not switched on for this task.")
+    if session.state != "awaiting_user_action":
+        raise GuideError(409, "invalid_transition", "There is no step waiting on you.")
+    check_budget(session)
+
+    epoch = session.control_epoch
+    gate = request.app.state.observation
+    gate.admit(session.id, time.monotonic())
+    if gate.lock(session.id).locked():
+        raise GuideError(409, "observation_in_progress", "Guider is still looking at the last one.")
+
+    instruction = await current_instruction(db, session)
+    if instruction is None:
+        raise GuideError(409, "invalid_transition", "There is no current instruction to check.")
+    step = await owned_step(db, session, instruction.step_id)
+    plan = await confirmed_plan(db, session)
+    later = [row for row in await steps_for(db, plan) if row.ordinal > step.ordinal]
+
+    async with gate.lock(session.id):
+        pixels = await asyncio.to_thread(prepare_frame, body.image_base64)
+        observer = (
+            getattr(request.app.state, "context_observer", None) or request.app.state.observer
+        )
+        # The adapter proposes; the guard vets it. Screen text is data, and a
+        # control whose label reads as an instruction never becomes one.
+        context = vet_context(
+            await asyncio.wait_for(
+                observer.observe_context(request_for(step, later), pixels),
+                timeout=20,
+            )
+        )
+        await db.refresh(session)
+        if not session.observation_active or session.control_epoch != epoch:
+            raise GuideError(409, "observation_stopped", "Watching was switched off.")
+        session.observation_calls += 1
+        session.frames_observed += 1
+        row, changed = await save_context(
+            db, session, step, context, request.state.request_id
+        )
+
+    return envelope(
+        request,
+        s.ContextTick(
+            stage=context.stage,
+            application=context.application,
+            application_matches_expected=context.application_matches_expected,
+            screen=context.screen,
+            dialog=context.dialog or None,
+            error_text=context.error_text or None,
+            controls=[
+                s.SeenControl(label=c.label, box=c.box, kind=c.kind) for c in context.controls
+            ],
+            confidence=context.confidence,
+            digest=row.digest,
+            changed=changed,
+            note=context.note,
+            observation_calls_remaining=calls_remaining(session),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
+@router.get("/sessions/{session_id}/context", response_model=s.Envelope[s.ContextTick] | None)
+async def last_context(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """The last belief recorded, for a client that reconnected. Answers 404 when
+    nothing has been observed yet, which is not an error — it is the default."""
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    from app.guide.context import latest
+
+    row = await latest(db, session)
+    if row is None:
+        raise not_found()
+    return envelope(
+        request,
+        s.ContextTick(
+            stage=row.stage,
+            application=row.application,
+            application_matches_expected=row.application_matches_expected,
+            screen=row.screen,
+            dialog=row.dialog,
+            error_text=row.error_text,
+            controls=[],
+            confidence=row.confidence,
+            digest=row.digest,
+            changed=False,
+            note="",
+            observation_calls_remaining=calls_remaining(session),
+            session=s.Session.model_validate(session),
+        ),
+    )
+
+
 @router.post("/tasks/{task_id}/screenshots", status_code=201, response_model=s.Envelope[s.Uploaded])
 async def upload(
     task_id: UUID,
@@ -982,7 +1185,11 @@ async def upload(
         if session.task_id != task.id:
             raise not_found()
         check_version(session, meta.expected_version)
-        if session.state not in ANALYSIS_STATES:
+        # Doc 05 allows a manual upload while a step is waiting on the user:
+        # "manual upload alone stores context". It became load-bearing with the
+        # evidence arm of verification, because the moment a user wants to share
+        # a screenshot of the result is precisely while the step is open.
+        if session.state not in ANALYSIS_STATES | {"awaiting_user_action"}:
             raise GuideError(409, "operation_in_progress", "Wait for the current analysis.")
     replacement = None
     if meta.replaces_screenshot_id:
@@ -1090,6 +1297,82 @@ async def delete_image(screenshot_id: UUID, request: Request, db: Db, owner: Own
             request.state.request_id,
         ),
     )
+
+
+@router.delete(
+    "/sessions/{session_id}", status_code=202, response_model=s.Envelope[s.DeletionReceipt]
+)
+async def delete_session(session_id: UUID, request: Request, db: Db, owner: Owner):
+    """Delete one attempt, and keep the goal.
+
+    Doc 07 is explicit that the task survives: a user removing one run has not
+    asked to forget what they were trying to do. The session is stopped before
+    anything is removed, so no client is left pointing at a step that no longer
+    exists.
+    """
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    job = await receipt_for(db, owner.id, "session", session.id)
+    if job.status != "purged":
+        await erase_session(db, request.app.state.storage, session, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
+
+
+@router.delete("/tasks/{task_id}", status_code=202, response_model=s.Envelope[s.DeletionReceipt])
+async def delete_task(task_id: UUID, request: Request, db: Db, owner: Owner):
+    """Delete a task and everything under it: every session, plan, step,
+    instruction, claim, verification, summary, import and image."""
+    task = await owned(db, m.GuideTask, str(task_id), owner.id)
+    job = await receipt_for(db, owner.id, "task", task.id)
+    if job.status != "purged":
+        await erase_task(db, request.app.state.storage, task, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
+
+
+# Doc 07 requires this exact header, typed by hand, plus a recent sign-in. An
+# account deletion that could happen by a misrouted request would not be a
+# deletion control, it would be a hazard.
+CONFIRM_DELETION = "delete-my-guide-account"
+RECENT_AUTH = timedelta(minutes=5)
+
+
+@router.delete("/account", status_code=202, response_model=s.Envelope[s.DeletionReceipt])
+async def delete_account(
+    request: Request,
+    db: Db,
+    owner: Owner,
+    confirm: Annotated[str, Header(alias="X-Confirm-Deletion")] = "",
+):
+    """Erase every trace of this account's Guide data.
+
+    The identity itself is removed separately, by an audited privileged step this
+    route does not perform (doc 08). What it does do is make the account unusable
+    immediately: every token issued before this moment stops being accepted, so
+    there is no window in which a deleted account still works.
+    """
+    if confirm != CONFIRM_DELETION:
+        raise GuideError(
+            422,
+            "validation_failed",
+            "Type the confirmation phrase exactly to delete your account.",
+            details={"expected": CONFIRM_DELETION},
+        )
+    identity = getattr(request.state, "identity_issued_at", None)
+    if identity is not None and m.now() - identity > RECENT_AUTH:
+        raise GuideError(
+            403,
+            "recent_auth_required",
+            "Sign in again before deleting your account.",
+        )
+    job = await receipt_for(db, owner.id, "account", owner.id)
+    if job.status != "purged":
+        await erase_account(db, request.app.state.storage, owner, request.state.request_id)
+        job.status = "purged"
+        job.completed_at = m.now()
+    return envelope(request, s.DeletionReceipt.model_validate(job, from_attributes=True))
 
 
 @router.get("/deletions/{deletion_id}", response_model=s.Envelope[s.DeletionReceipt])

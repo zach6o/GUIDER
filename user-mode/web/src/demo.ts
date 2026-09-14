@@ -450,6 +450,34 @@ export const demoApi: GuideApi = {
     }
     return { id, status: 'purged', online_purge_due_at: timestamp() };
   },
+  // The same order the backend uses: children first, then the parent, then the
+  // receipt. Nothing here is asynchronous, so nothing can half-delete.
+  async deleteSession(id) {
+    requireItem(sessions, id);
+    for (const [key, row] of instructions) if (row.session_id === id) instructions.delete(key);
+    for (const [key, row] of plans) if (row.session_id === id) plans.delete(key);
+    for (const [key, row] of images) if (row.screenshot.session_id === id) images.delete(key);
+    claims.clear();
+    events.delete(id); summaries.delete(id); selfReported.delete(id); stuck.delete(id);
+    sessions.delete(id);
+    // The task stays: removing one attempt is not asking to forget the goal.
+    return { id: uid(), status: 'purged' as const, online_purge_due_at: timestamp() };
+  },
+  async deleteTask(id) {
+    for (const session of [...sessions.values()]) {
+      if (session.task_id === id) await demoApi.deleteSession(session.id);
+    }
+    for (const [key, row] of images) if (row.screenshot.task_id === id) images.delete(key);
+    tasks.delete(id);
+    return { id: uid(), status: 'purged' as const, online_purge_due_at: timestamp() };
+  },
+  async deleteAccount() {
+    for (const task of [...tasks.values()]) await demoApi.deleteTask(task.id);
+    for (const map of [tasks, sessions, plans, instructions, claims, images, operations,
+      summaries, events, selfReported]) map.clear();
+    stuck.clear();
+    return { id: uid(), status: 'purged' as const, online_purge_due_at: timestamp() };
+  },
   async pause(id) {
     const session = requireItem(sessions, id);
     if (session.state !== 'completed') { session.state = 'paused'; session.state_version++; session.control_epoch++; }
@@ -584,6 +612,15 @@ export const demoApi: GuideApi = {
       verification, step: found.step, session: current, verified: false,
       next_operation_id: instructOperation().id,
     });
+  },
+  // The demo has no vision provider, so it refuses to check rather than
+  // inventing a verdict about a real screenshot. Saying so is the honest
+  // mirror of a backend that would look.
+  async checkEvidence() {
+    throw new Error(
+      'This demo cannot check a screenshot: it has no vision provider. '
+      + 'Tell Guider what happened instead, and it will be recorded as your word.',
+    );
   },
   async skipStep(session, stepId, reason) {
     const current = requireItem(sessions, session.id);

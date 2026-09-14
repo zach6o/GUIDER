@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from app.media import normalize
 from app.providers.base import (
+    ContextRequest,
     ImportContext,
     ImportedTask,
     InstructionContext,
@@ -22,6 +23,7 @@ from app.providers.base import (
     ProposedInstruction,
     ProposedPlan,
     ProposedStep,
+    ScreenContext,
 )
 from app.schemas import Analysis, BBox, Observation
 
@@ -173,6 +175,21 @@ class FixtureProvider:
             app_visible=ctx.application_key[:80],
             ui_changed=False,
             anomaly="unreadable",
+            note="The development observer cannot read frames. No vision provider is configured.",
+        )
+
+    async def observe_context(self, ctx: ContextRequest, image: bytes) -> ScreenContext:
+        """Reads nothing, and says so. A fixture that guessed at a screen would
+        produce a digest that changed on every frame, which is the one failure
+        mode the context design cannot tolerate — so it returns the same
+        unreadable belief every time, and costs nothing downstream."""
+        return ScreenContext(
+            application=ctx.application_key[:80],
+            application_matches_expected=True,
+            screen="",
+            stage="unreadable",
+            controls=[],
+            confidence=0.0,
             note="The development observer cannot read frames. No vision provider is configured.",
         )
 

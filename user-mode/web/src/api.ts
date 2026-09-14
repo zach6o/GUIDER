@@ -65,6 +65,13 @@ const remote: GuideApi = {
   }),
   operation: id => request(`/operations/${id}`),
   deleteImage: id => request(`/screenshots/${id}`, { method: 'DELETE' }),
+  deleteTask: id => request(`/tasks/${id}`, { method: 'DELETE' }),
+  deleteSession: id => request(`/sessions/${id}`, { method: 'DELETE' }),
+  // The phrase is typed by the user and sent verbatim: a header nobody sends by
+  // accident is what stops a misrouted request from erasing an account.
+  deleteAccount: () => request('/account', {
+    method: 'DELETE', headers: { 'X-Confirm-Deletion': 'delete-my-guide-account' },
+  }),
   pause: id => post(`/sessions/${id}/pause`, { reason: 'user' }),
   stop: id => post(`/sessions/${id}/stop`, { reason: 'user' }),
   start: session => post(`/sessions/${session.id}/start`, {
@@ -86,6 +93,13 @@ const remote: GuideApi = {
   selfReport: (session, stepId, claimId, said) =>
     post(`/sessions/${session.id}/steps/${stepId}/verifications`, {
       expected_version: session.state_version, claim_id: claimId, self_report: said,
+    }),
+  // The other arm of the same route. A screenshot is checked by a worker, so
+  // this answers with an operation to follow rather than a result.
+  checkEvidence: (session, stepId, claimId, screenshotId) =>
+    post(`/sessions/${session.id}/steps/${stepId}/verifications`, {
+      expected_version: session.state_version, claim_id: claimId,
+      evidence_ids: [screenshotId],
     }),
   skipStep: (session, stepId, reason) => post(`/sessions/${session.id}/steps/${stepId}/skip`, {
     expected_version: session.state_version, reason,

@@ -25,7 +25,7 @@ from tests.conftest import ALICE, on_postgres
 from tests.test_flow import PREFIX
 from tests.test_instructions import act, session_state, started
 from tests.test_observation import observe, verdict, watching
-from tests.test_self_report import claim, self_report
+from tests.test_self_report import advance, claim, self_report
 
 
 def codes(*responses) -> list[int]:
@@ -156,11 +156,10 @@ async def test_stopping_beats_a_frame_that_is_already_in_flight(harness):
 
 @on_postgres
 async def test_one_session_ends_once(harness):
-    _, session, current = await started(harness)
-    step_id = current["step"]["id"]
-    claimed = await claim(harness, session, step_id)
-    session = await session_state(harness, session["id"])
-    await self_report(harness, session, step_id, claimed["claim_id"])
+    _, session, _ = await started(harness)
+    # Every step reported, so the plan is out and finishing is allowed at all.
+    while await advance(harness, session["id"]):
+        pass
     session = await session_state(harness, session["id"])
 
     async def finish():

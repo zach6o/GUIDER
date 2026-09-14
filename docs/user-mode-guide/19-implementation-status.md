@@ -1,5 +1,47 @@
 # 19 · Implementation status and session handoff
 
+## A way to make a real provider request: 2026-09-14
+
+Every provider answer in the suite is a recorded shape replayed through an
+injected transport, and doc 19 has carried "no real Anthropic request has been
+made" since PR-16. That sentence is still true today, and this is the path that
+can change it.
+
+`scripts/smoke_provider.py` sends one synthetic request per role the configured
+provider serves — plan, instruct, observe and import — parses each answer through
+the adapter, runs the guard over it, and prints the verdict with its latency.
+Nothing touches a database, no session exists, the frame is a terminal drawn in
+memory rather than anyone's screen, and the transcript is four lines written in
+the file. It refuses to run without `--spend-real-money`, because a flag nobody
+types by accident is the difference between an instrument and an accident.
+
+What it reports is deliberately not a pass mark. A refusal, a truncated answer
+and a guard rejection are all printed as findings rather than raised as crashes —
+the last of those being the whole reason the guard sits outside the adapter. The
+observe run prints the confidence a real model returns on a screen where the
+honest answer is yes, and asserts nothing about it: whether a model clears 0.85
+is what D05 exists to settle, and one frame is not the sample that settles it.
+The import run sends a transcript with an injected `SYSTEM:` line and says
+plainly whether it reached the plan.
+
+`.github/workflows/provider-smoke.yml` is the only place CI can run it: manual
+dispatch, a protected `provider-smoke` environment holding the key, and the
+answers kept as an artifact. The ordinary pipeline is unchanged and still reaches
+no network.
+
+`tests/test_smoke_script.py` covers the guardrails without spending anything: an
+unconfigured machine builds no registry and sends nothing, a fixture-resolved
+role is reported as having sent nothing rather than counted as a pass, the frame
+is a real PNG with something drawn on it, and a refusal becomes a printed line.
+
+Still not proven, and the reason is worth stating plainly: **no request has been
+made yet.** This repository has no provider key, so the script has run only
+against the unconfigured path. D01 remains open per provider, and account-mode
+access stays a development switch.
+
+Current verification: 334 backend tests pass and 12 skip on SQLite, 116 web unit
+tests pass, and 48 browser scenarios pass in installed Chrome.
+
 ## Racing the engine on PostgreSQL: 2026-09-14
 
 Doc 20 has said since the migration began that the row locks are no-ops on SQLite

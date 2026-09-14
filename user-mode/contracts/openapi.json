@@ -897,6 +897,7 @@
     "/api/v1/guide/sessions": {
       "get": {
         "summary": "Sessions",
+        "description": "History, with enough filters to find one task again.\n\n`q` matches the task's own title and goal \u2014 the user's words, not anything\nread off a screen. Screen-derived text is never searchable, because a search\nbox over descriptions of someone's desktop is a different product.",
         "operationId": "sessions_api_v1_guide_sessions_get",
         "security": [
           {
@@ -964,6 +965,67 @@
                 }
               ],
               "title": "State"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Outcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120,
+              "default": "",
+              "title": "Q"
             }
           }
         ],
@@ -3114,6 +3176,152 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Envelope_Completed_"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/guide/sessions/{session_id}/export": {
+      "get": {
+        "summary": "Export Session",
+        "description": "One task, as the user's own record.\n\nWhat it contains is what they wrote and what Guider concluded. What it\ndeliberately omits is what Guider *saw*: no screen descriptions, no control\nlabels, no frames. An export exists to be kept and forwarded, and one that\ncarried a description of somebody's desktop would be a liability handed to\nthem without warning.",
+        "operationId": "export_session_api_v1_guide_sessions__session_id__export_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_SessionExport_"
                 }
               }
             }
@@ -7085,6 +7293,25 @@
         ],
         "title": "Envelope[SelfReported]"
       },
+      "Envelope_SessionExport_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionExport"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SessionExport]"
+      },
       "Envelope_SessionList_": {
         "properties": {
           "data": {
@@ -7353,6 +7580,63 @@
           "next_after"
         ],
         "title": "EventPage"
+      },
+      "ExportedStep": {
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "title": "Ordinal"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "settled_by": {
+            "type": "string",
+            "title": "Settled By"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ordinal",
+          "title",
+          "action",
+          "status",
+          "settled_by"
+        ],
+        "title": "ExportedStep"
       },
       "FeedbackRecorded": {
         "properties": {
@@ -8039,6 +8323,18 @@
         ],
         "title": "Operation"
       },
+      "Outcome": {
+        "type": "string",
+        "enum": [
+          "achieved",
+          "user_reported",
+          "stopped",
+          "failed",
+          "expired"
+        ],
+        "title": "Outcome",
+        "description": "How a task ended. Filterable, because \"show me what I actually finished\"\nis the question history exists to answer."
+      },
       "PauseRequest": {
         "properties": {
           "expected_version": {
@@ -8677,6 +8973,99 @@
           "updated_at"
         ],
         "title": "Session"
+      },
+      "SessionExport": {
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Exported At"
+          },
+          "task_title": {
+            "type": "string",
+            "title": "Task Title"
+          },
+          "goal": {
+            "type": "string",
+            "title": "Goal"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "application": {
+            "type": "string",
+            "title": "Application"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ExportedStep"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "summary_text": {
+            "type": "string",
+            "title": "Summary Text",
+            "default": ""
+          },
+          "corrections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Corrections",
+            "default": []
+          },
+          "frames_observed": {
+            "type": "integer",
+            "title": "Frames Observed",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "exported_at",
+          "task_title",
+          "goal",
+          "category",
+          "application",
+          "started_at",
+          "ended_at",
+          "outcome",
+          "steps"
+        ],
+        "title": "SessionExport",
+        "description": "One task, as the user's own record.\n\nContains what they wrote and what Guider concluded, and deliberately not what\nGuider saw: no screen descriptions, no control labels, no frames. An export\nthe user forwards should not carry a description of their desktop."
       },
       "SessionItem": {
         "properties": {

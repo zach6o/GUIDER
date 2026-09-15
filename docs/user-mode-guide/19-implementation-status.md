@@ -1,5 +1,43 @@
 # 19 · Implementation status and session handoff
 
+## The mark gets drawn: 2026-09-15
+
+The context tick has returned a mark since V2.3 and nothing put it on screen.
+The renderer existed with its tests; what was missing was a surface, and the
+surface was sitting off-screen the whole time — the watched window's own video
+element, mounted but hidden because until now nothing needed to look at it.
+
+[ADR-020](adr/020-overlay-surfaces.md) says the preview overlay draws on
+*Guider's copy of the shared window*, and that is exactly what that element is.
+So it is now shown while watching is on, in a panel beside the guide, with the
+mark drawn over it. The separate mirror is a different capture of a possibly
+different window and is not a place a mark may be drawn: putting one there would
+be a ring on the wrong picture.
+
+The element is never unmounted, only moved off-screen with `sr-only` when
+watching is off — a remounted `<video>` loses the stream it is playing, and the
+stream is the thing watching depends on. Both of Guider's copies of a window now
+live in one fixed column, so a mirror and a preview cannot land on top of each
+other.
+
+Hidden areas are painted over the preview as well. What the user chose not to
+send should not be on display either, and both the marks and the masks are
+placed against the *picture* rather than the element — `object-fit: contain`
+letterboxes, and a box placed against the element would drift by the bars. One
+paint pass sets the picture's rectangle as custom properties and draws the mark,
+and it runs again on resize, on a DPI or zoom change and when the video reports
+its dimensions. The mark itself never changes; only the multiplier does.
+
+A mark is still advisory. Most ticks carry none, the instruction says where to
+look in words regardless, and the panel says so where the user can read it.
+
+Current verification: 151 web unit tests pass (two new, covering where a label
+sits relative to its box) and 56 browser scenarios pass in installed Chrome. The
+new scenario holds that the preview is absent until something is watched and
+that its video element is mounted all the same. The demo has no vision provider,
+so no browser test can produce a real mark; the drawing itself remains covered
+by the renderer's unit tests.
+
 ## V2 reaches the screen: 2026-09-15
 
 Every V2 phase had an implementation and none of it was reachable. The Context
@@ -33,10 +71,8 @@ where it does not — offered-and-broken is worse than not offered. It is off un
 asked for, silent the moment it is switched off, and it never speaks a step the
 guide has already passed.
 
-Not reachable yet, and honestly so: marks are returned by the context tick but
-nothing draws them, because the only surface that could is the mirrored preview
-and the demo has no vision provider to produce one. The renderer and its tests
-exist; wiring them needs a real context from a real provider.
+Marks were the one thing still returned and never drawn; the section above this
+one closes that.
 
 Current verification: 484 backend tests pass and 12 skip on SQLite, 149 web unit
 tests pass, and 55 browser scenarios pass in installed Chrome.

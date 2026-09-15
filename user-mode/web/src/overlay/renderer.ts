@@ -77,6 +77,15 @@ export function labelSide(box: Placement, picture: Placement): 'above' | 'below'
   return 'inside';
 }
 
+/** Where the label's own top edge goes, given the side it was assigned.
+ *
+ *  Below means below the box, so it starts where the box ends; above and inside
+ *  both start at the box's top edge and are lifted or nudged by the stylesheet,
+ *  which is the only place that knows how tall the text is. */
+export function labelTop(box: Placement, side: 'above' | 'below' | 'inside'): number {
+  return side === 'below' ? box.top + box.height : box.top;
+}
+
 export interface DrawOptions {
   reducedMotion?: boolean;
 }
@@ -110,11 +119,12 @@ export function draw(
   // part that has to work without sight.
   shape.setAttribute('aria-hidden', 'true');
 
+  const side = labelSide(box, picture);
   const label = document.createElement('span');
-  label.className = `mark-label mark-label-${labelSide(box, picture)}`;
+  label.className = `mark-label mark-label-${side}`;
   label.textContent = mark.label;
   label.style.left = `${box.left}px`;
-  label.style.top = `${box.top}px`;
+  label.style.top = `${labelTop(box, side)}px`;
   label.style.minWidth = `${box.width}px`;
 
   if (mark.kind === 'spotlight') {

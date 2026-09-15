@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
-  ClipboardPaste, Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
+  ClipboardPaste, Code2, Compass, Eye, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
   ListChecks, LogOut, MonitorUp, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal,
   Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
@@ -21,10 +21,12 @@ import { Watcher } from './guide/watching';
 import { IdleWatcher } from './guide/idle';
 import { browserSpeaker, spokenText } from './guide/speech';
 import { createFrameSource, type MaskArea } from './overlay/frameSource';
+import { draw, pictureBox } from './overlay/renderer';
 import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
 import type {
-  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, Session, Summary, Task,
+  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, SeenMark, Session,
+  Summary, Task,
 } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -75,6 +77,11 @@ export default function App() {
   const [confirmDelete, setConfirmDelete] = useState<HistoryItem | null>(null);
   const [contextMessage, setContextMessage] = useState('');
   const [skipOffer, setSkipOffer] = useState<{ titles: string[]; stepIds: string[] } | null>(null);
+  // Where the guide is pointing on the frame it last read, and the areas the
+  // user painted out. Both belong to the watched window, so both are drawn on
+  // Guider's copy of it and nowhere else (ADR-020).
+  const [mark, setMark] = useState<SeenMark | null>(null);
+  const [watchMasks, setWatchMasks] = useState<readonly MaskArea[]>([]);
   const [speaking, setSpeaking] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState('');
   const [mirroring, setMirroring] = useState(false);
@@ -83,6 +90,8 @@ export default function App() {
   const [codeSent, setCodeSent] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const watchVideo = useRef<HTMLVideoElement>(null);
+  const markLayer = useRef<HTMLDivElement>(null);
+  const previewStage = useRef<HTMLDivElement>(null);
   const mirrorVideo = useRef<HTMLVideoElement>(null);
   const capture = useRef(new ScreenCapture());
   // Its own capture, kept apart from the observation one on purpose: mirroring
@@ -278,6 +287,39 @@ export default function App() {
     speaker.current?.speakOnce(spokenText(instruction));
   }, [speaking, live.state.instruction]);
   useEffect(() => { guide.current = live; });
+  // Watching is on exactly while the server is counting frames for this session.
+  const watching = framesObserved !== null;
+  // Guider's copy of the watched window is the only surface a browser is allowed
+  // to draw a mark on (ADR-020), and the mark arrives in frame coordinates.
+  // Anything that moves the picture inside its element — a resize, a zoom, a
+  // monitor with another DPI — changes the multiplier and never the mark, so
+  // the answer to all of them is to place it again.
+  useEffect(() => {
+    const layer = markLayer.current;
+    const stage = previewStage.current;
+    const video = watchVideo.current;
+    if (!layer || !stage || !video) return;
+    const paint = () => {
+      // Hidden areas are fractions of the frame as well, so they are placed
+      // against the picture rather than the element for the same reason.
+      const picture = pictureBox(video, video.videoWidth, video.videoHeight);
+      stage.style.setProperty('--picture-left', `${picture.left}px`);
+      stage.style.setProperty('--picture-top', `${picture.top}px`);
+      stage.style.setProperty('--picture-width', `${picture.width}px`);
+      stage.style.setProperty('--picture-height', `${picture.height}px`);
+      draw(layer, watching ? mark : null, video);
+    };
+    paint();
+    video.addEventListener('loadedmetadata', paint);
+    window.addEventListener('resize', paint);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(paint);
+    observer?.observe(stage);
+    return () => {
+      video.removeEventListener('loadedmetadata', paint);
+      window.removeEventListener('resize', paint);
+      observer?.disconnect();
+    };
+  }, [mark, watching, watchMasks]);
   const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block');
   const activeStep = live.state.step;
   const islandState: IslandState = islandStateFor(live.state);
@@ -289,6 +331,8 @@ export default function App() {
     idle.current = null;
     setContextMessage('');
     setSkipOffer(null);
+    setMark(null);
+    setWatchMasks([]);
     capture.current.stop();
     if (watchVideo.current) watchVideo.current.srcObject = null;
     setFramesObserved(null);
@@ -305,6 +349,7 @@ export default function App() {
     video.srcObject = stream;
     await video.play().catch(() => {});
     const source = createFrameSource(video, () => masks);
+    setWatchMasks(masks);
     const running = new Watcher(api, source, {
       session: () => guide.current.session,
       awaitingAction: () => guide.current.awaitingAction(),
@@ -314,6 +359,9 @@ export default function App() {
       onContext: tick => {
         if (tick.changed) idle.current?.activity();
         setContextMessage(tick.message);
+        // A mark is advisory: it arrives with most ticks as null, and the
+        // instruction already says where to look in words.
+        setMark(tick.mark);
         setSkipOffer(
           tick.action === 'offer_skip' && tick.offer
             ? { titles: tick.offer.titles, stepIds: tick.offer.step_ids }
@@ -698,6 +746,9 @@ export default function App() {
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
     </div>
+    {/* Both of Guider's own copies of a window live in one column, so a mirror
+        and a watched preview cannot land on top of each other. */}
+    <div className="guide-docks">
     {guiding && <section
       className={mirroring ? 'guide-mirror on' : 'guide-mirror'}
       aria-label="Your mirrored window"
@@ -712,6 +763,46 @@ export default function App() {
       <video ref={mirrorVideo} muted autoPlay playsInline aria-label="Mirrored window" />
       <p className="surface-note"><ShieldCheck size={14} /> {MIRROR_NOTE}</p>
     </section>}
+    {/* The watched window lives here for as long as watching is on: the setup
+        dialog closes, and its frames must keep arriving. While watching is off
+        it stays off-screen rather than unmounting, because a remounted element
+        loses the stream it is playing.
+
+        When watching is on it is shown, because this copy is the one surface a
+        browser may draw a mark on (ADR-020). The hidden areas are painted over
+        it too: what the user chose not to send should not be on display here
+        either. */}
+    <section
+      className={watching ? 'guide-preview' : 'sr-only'}
+      aria-label="Guider’s copy of the window it is watching"
+    >
+      {watching && <div className="guide-preview-head">
+        <span><Eye size={15} /> Guider’s copy of your window</span>
+        <button className="text-button" onClick={() => void stopWatching('Watching stopped.')}>
+          Stop watching
+        </button>
+      </div>}
+      <div className="preview-stage" ref={previewStage}>
+        <video ref={watchVideo} muted playsInline aria-hidden="true" tabIndex={-1} />
+        {watching && watchMasks.map((area, index) => <div
+          key={index}
+          className="watch-mask"
+          aria-hidden="true"
+          style={{
+            left: `calc(var(--picture-left) + var(--picture-width) * ${area.x})`,
+            top: `calc(var(--picture-top) + var(--picture-height) * ${area.y})`,
+            width: `calc(var(--picture-width) * ${area.width})`,
+            height: `calc(var(--picture-height) * ${area.height})`,
+          }}
+        />)}
+        <div className="mark-layer" ref={markLayer} aria-hidden="true" />
+      </div>
+      {watching && <p className="surface-note">
+        <ShieldCheck size={14} /> Act on your own window. A mark here points at the same place;
+        the step says where to look in words either way.
+      </p>}
+    </section>
+    </div>
     {guiding && plan && <GuideIsland
       state={islandState}
       step={activeStep}
@@ -763,9 +854,6 @@ export default function App() {
       onStart={beginWatching}
       onCancel={() => { setWatchOpen(false); capture.current.stop(); }}
     />}
-    {/* The watched window lives here for as long as watching is on: the setup
-        dialog closes, and its frames must keep arriving. It is never shown. */}
-    <video ref={watchVideo} className="sr-only" muted playsInline aria-hidden="true" tabIndex={-1} />
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />
     {authOpen && <div className="modal-backdrop"><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
       if (codeSent) { const result = await supabase!.auth.verifyOtp({ email, token: code, type: 'email' }); if (result.error) throw result.error; setAuthOpen(false); setCode(''); setCodeSent(false); }

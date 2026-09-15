@@ -44,6 +44,17 @@ test('the guide says nothing about the screen when nothing is watching', async (
   await expect(island(page).locator('.island-skip-offer')).toHaveCount(0);
 });
 
+test('the copy Guider draws on is off screen until something is watched', async ({ page }) => {
+  await guiding(page);
+  // No panel, because there is nothing to show: a window Guider is not watching
+  // is not Guider's copy of anything.
+  await expect(page.locator('.guide-preview')).toHaveCount(0);
+  // The element itself stays mounted all the same. Unmounting it would drop the
+  // stream the moment watching started, which is the bug this guards.
+  await expect(page.locator('.preview-stage video')).toHaveCount(1);
+  await expect(page.locator('.mark-layer')).toBeEmpty();
+});
+
 // The demo's refusal to watch at all is already held by
 // `watch-consent.spec.ts`, which carries the fake window picker that exercise
 // needs. Duplicating it here would duplicate the scaffolding, not the coverage.

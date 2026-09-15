@@ -1,5 +1,48 @@
 # 19 · Implementation status and session handoff
 
+## One palette, two themes: 2026-09-15
+
+The frontend audit asked for dark mode and the answer was no, because the
+stylesheet carried a colour literal in every place a theme would have to be
+applied by hand — 329 of them, not the 260 the audit estimated, and clustering at
+a threshold nobody could see still left 190. A half-applied dark theme is white
+cards punched through a dark page, which is worse than no dark theme.
+
+So the literals became **33 semantic tokens**, and the stylesheets now contain
+none outside the palette block — a check that is one grep, and the reason a
+future colour cannot quietly escape the system. Light is defined on `:root` and
+dark redefines the same names under `prefers-color-scheme`. There is no toggle:
+the reader's system already knows the answer, and a control that can disagree
+with it is a preference to store, migrate and explain.
+
+Two pairs had to be separated rather than merged, and both were only visible once
+the dark theme existed. **`--text-on-accent` against `--text-on-stage`**: text on
+a filled accent flips when that accent goes from deep green to bright, while text
+on a terminal or a video stage does not, because those are dark in both themes —
+merged, the first person to switch their system to dark would have got dark text
+on a black terminal. And **`--island-tone` against `--island-ink`**: the same
+colour drew the island's ring and printed its status, but a ring carries a shape
+at 3:1 and a word needs 4.5:1, and the one value could not be both.
+
+The practice window in the screen-guide demo is deliberately *not* themed. It is
+a picture of somebody else's application, and the demo's own task is to switch it
+from light to dark; a simulation that arrived already dark would make the
+narration wrong before the user had touched anything. Its colours are literal,
+fixed, and commented as such.
+
+The contrast sweep is finished with the palette rather than beside it, because
+every colour now has one place to change. An in-browser audit walked every text
+node on seven surfaces in both themes, comparing each against the background it
+actually composites onto: `--text-muted`, `--text-faint`, `--accent` and
+`--accent-strong` moved, and both themes now report nothing below AA.
+
+Light rendering is unchanged where it mattered: the before-and-after screenshots
+differ only where a text colour was darkened for contrast.
+
+Current verification: 169 web unit tests pass and 62 browser scenarios pass in
+installed Chrome, two of them new — that the dark theme paints the page and the
+island rather than half of them, and that a step stays readable against it.
+
 ## Older tasks, on request: 2026-09-15
 
 `GET /sessions` has paged by cursor since the history route was written, and the
@@ -56,9 +99,8 @@ better end state. The API carries its own policy: it renders no page, so it is
 allowed nothing at all, on the error path as much as the ordinary one.
 
 Seven colours used for small text failed 4.5:1 against the backgrounds they
-actually sit on and are darkened. The other suspects need each rule's real
-background to judge, which is the same sweep as the dark-mode palette, and it is
-listed there rather than half-done here.
+actually sit on and are darkened. The rest were judged against their real
+backgrounds in the palette pass recorded above.
 
 Current verification: 168 web unit tests pass, 60 browser scenarios pass in
 installed Chrome — four new, covering the trap, Escape and focus return, the
@@ -987,7 +1029,7 @@ SQLite checks are development evidence only. PostgreSQL concurrency, native PKCE
 4. Complete PostgreSQL migrations and tests: native UUID/JSONB types, enum/check constraints, partial uniqueness, lineage FKs, outbox certification and durable deletion races. The initial migration uses portable development column types and composite child-owner FKs.
 5. Task/session/account erasure, full 30-day content retention, replay/audit/idempotency cleanup, orphan sweeper, deletion-failure retries and backup erasure ledger. The minute-based media sweeper handles image TTL, not the entire lifecycle model.
 6. Remaining phase-1 wire surface, including session upload alias; persistent screenshot inventory/recovery, resumable task routing and durable terminal summaries. History pagination now reaches the UI; the API's filters and search do not yet. Priority pause and stop work; Resume/planner/verification are not implemented.
-7. Remaining accessibility work: the systematic contrast pass over the stylesheet's 145 colour literals, which belongs with the dark-mode palette change rather than beside it, and end-to-end auth loss/sign-out/refresh cases. Focus trapping, Escape, the 200% zoom check and the Content-Security-Policy are implemented; **production hosting must send the policy as a header**, since a meta tag cannot carry `frame-ancestors`.
+7. Remaining accessibility work: end-to-end auth loss/sign-out/refresh cases. Focus trapping, Escape, the 200% zoom check, the contrast sweep in both themes and the Content-Security-Policy are implemented; **production hosting must send the policy as a header**, since a meta tag cannot carry `frame-ancestors`.
 8. Native build and synthetic PKCE spike. The WPF scaffold has no capture, token handling or overlay feature.
 
 Production startup is hard-gated in `Settings.check()`. Do not remove the gate solely to deploy this preview.

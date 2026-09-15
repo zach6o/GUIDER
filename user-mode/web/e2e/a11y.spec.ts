@@ -87,3 +87,44 @@ test('the page is served under a policy, and nothing on it is blocked', async ({
   await expect(page.getByRole('button', { name: 'Let’s figure it out' })).toBeVisible();
   expect(violations).toEqual([]);
 });
+
+test.describe('the dark theme', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('paints the whole page, not half of it', async ({ page }) => {
+    await guiding(page);
+    // Every surface reads from the palette, so a card that stayed white would be
+    // a literal that escaped it — the half-converted theme this change exists to
+    // avoid. Sampling the deepest card on the page catches that.
+    const lightness = await page.evaluate(() => {
+      const value = (el: Element) => {
+        const [r, g, b] = getComputedStyle(el).backgroundColor.match(/\d+/g)!.map(Number);
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      };
+      return {
+        body: value(document.body),
+        panel: value(document.querySelector('.guide-island .island-panel')!),
+      };
+    });
+    expect(lightness.body).toBeLessThan(0.25);
+    expect(lightness.panel).toBeLessThan(0.25);
+  });
+
+  test('keeps the step readable against it', async ({ page }) => {
+    await guiding(page);
+    const ratio = await page.evaluate(() => {
+      const channel = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      const luminance = (colour: string) => {
+        const [r, g, b] = colour.match(/\d+/g)!.map(Number).map(v => channel(v / 255));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const step = document.querySelector('.guide-island .island-panel h2')
+        ?? document.querySelector('.guide-island .island-panel')!;
+      const panel = document.querySelector('.guide-island .island-panel')!;
+      const front = luminance(getComputedStyle(step).color) + 0.05;
+      const back = luminance(getComputedStyle(panel).backgroundColor) + 0.05;
+      return Math.max(front, back) / Math.min(front, back);
+    });
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+});

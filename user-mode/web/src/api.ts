@@ -144,6 +144,23 @@ const remote: GuideApi = {
   stopWatching: id => request<ObservationState>(
     `/sessions/${id}/observation`, { method: 'DELETE' },
   ),
+  // The context tick. Same frame discipline as `observe`: held in memory on both
+  // ends, never stored, and the answer is a belief rather than a verdict.
+  observeContext: (session, imageBase64, admittedAt, signal) => request(
+    `/sessions/${session.id}/context`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        expected_version: session.state_version, image_base64: imageBase64,
+        admitted_at: admittedAt,
+      }),
+      signal,
+    },
+  ),
+  skipForward: (session, stepId, stepIds) => post(
+    `/sessions/${session.id}/steps/${stepId}/skip-forward`,
+    { expected_version: session.state_version, step_ids: stepIds },
+  ),
   // One tick. The frame is held in memory on both ends and never stored.
   observe: (session, imageBase64, admittedAt, signal) => request(
     `/sessions/${session.id}/observe`,

@@ -15,7 +15,7 @@
  */
 
 import { MotionGate, type Decision } from './observer';
-import type { GuideApi, ObservationTick, Session } from '../types';
+import type { ContextTick, GuideApi, ObservationTick, Session } from '../types';
 
 /** How often the cheap local comparison runs. Sending is far rarer. */
 export const SAMPLE_INTERVAL_MS = 500;
@@ -37,6 +37,9 @@ export interface WatchHooks {
   onCounters(framesObserved: number, callsRemaining: number): void;
   /** A verdict worth acting on: `ask` needs a person, `advance` already moved. */
   onTick(tick: ObservationTick): void;
+  /** What the guide now believes is on screen, and what it wants to do about
+   *  it. Arrives on every admitted frame; `changed` is false most of the time. */
+  onContext?(tick: ContextTick): void;
   /** Something the user should read: budget spent, provider unable to read. */
   onNotice(message: string): void;
   /** Watching ended, with the reason to show. */
@@ -133,8 +136,24 @@ export class Watcher {
     this.inFlight = controller;
     try {
       const image = await this.source.encode();
+      const admittedAt = new Date(now).toISOString();
+      // One frame, encoded once, used for both questions. Encoding it twice
+      // would double the work on the user's machine for no more information —
+      // and the two calls are already counted against one budget server-side.
+      if (this.hooks.onContext) {
+        try {
+          this.hooks.onContext(
+            await this.api.observeContext(session, image, admittedAt, controller.signal),
+          );
+        } catch (contextError) {
+          // Context is an improvement, never a requirement. A guide that stopped
+          // checking steps because it could not describe the screen would be
+          // worse than one that just checks steps.
+          await this.handle(contextError);
+        }
+      }
       const tick = await this.api.observe(
-        session, image, new Date(now).toISOString(), controller.signal,
+        session, image, admittedAt, controller.signal,
       );
       this.budget = tick.observation_calls_remaining;
       this.hooks.onCounters(tick.frames_observed, tick.observation_calls_remaining);

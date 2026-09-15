@@ -1,5 +1,82 @@
 # 19 · Implementation status and session handoff
 
+## The mark gets drawn: 2026-09-15
+
+The context tick has returned a mark since V2.3 and nothing put it on screen.
+The renderer existed with its tests; what was missing was a surface, and the
+surface was sitting off-screen the whole time — the watched window's own video
+element, mounted but hidden because until now nothing needed to look at it.
+
+[ADR-020](adr/020-overlay-surfaces.md) says the preview overlay draws on
+*Guider's copy of the shared window*, and that is exactly what that element is.
+So it is now shown while watching is on, in a panel beside the guide, with the
+mark drawn over it. The separate mirror is a different capture of a possibly
+different window and is not a place a mark may be drawn: putting one there would
+be a ring on the wrong picture.
+
+The element is never unmounted, only moved off-screen with `sr-only` when
+watching is off — a remounted `<video>` loses the stream it is playing, and the
+stream is the thing watching depends on. Both of Guider's copies of a window now
+live in one fixed column, so a mirror and a preview cannot land on top of each
+other.
+
+Hidden areas are painted over the preview as well. What the user chose not to
+send should not be on display either, and both the marks and the masks are
+placed against the *picture* rather than the element — `object-fit: contain`
+letterboxes, and a box placed against the element would drift by the bars. One
+paint pass sets the picture's rectangle as custom properties and draws the mark,
+and it runs again on resize, on a DPI or zoom change and when the video reports
+its dimensions. The mark itself never changes; only the multiplier does.
+
+A mark is still advisory. Most ticks carry none, the instruction says where to
+look in words regardless, and the panel says so where the user can read it.
+
+Current verification: 151 web unit tests pass (two new, covering where a label
+sits relative to its box) and 56 browser scenarios pass in installed Chrome. The
+new scenario holds that the preview is absent until something is watched and
+that its video element is mounted all the same. The demo has no vision provider,
+so no browser test can produce a real mark; the drawing itself remains covered
+by the renderer's unit tests.
+
+## V2 reaches the screen: 2026-09-15
+
+Every V2 phase had an implementation and none of it was reachable. The Context
+Engine answered a route nobody called; the idle watcher, the speaker and the
+overlay renderer were modules with tests and no callers. This connects them.
+
+**One frame, two questions.** The watch loop already encodes a masked frame once
+per admitted tick; it now sends that same encoding to `/context` as well as
+`/observe`. Encoding twice would double the work on the user's machine for no
+more information, and the two calls already draw on one budget server-side.
+Context is an improvement and never a requirement: if the context call fails, the
+tick carries on and the step is still checked, because a guide that stopped
+checking steps because it could not describe the screen would be worse than one
+that only checks steps.
+
+The island now says what the guide believes, in the user's words, and only when
+something is wrong — the wrong application, a dialog in the way, a screen that
+cannot be read. Most ticks say nothing has changed and the island is untouched,
+which is the whole point of the digest.
+
+A forward skip is offered with every step it would settle **named**, and accepted
+by a separate act: the offer is a tick, the acceptance is a route. The copy says
+what the record will say — *skipped*, not checked and not the user's word.
+
+Idle staging runs only while something is watching, because with watching off
+there is no screen to be quiet and the guide waits indefinitely by design. The
+five-minute stage stops watching through the ordinary stop and keeps the place.
+
+Reading aloud is offered where the browser has speech synthesis and simply absent
+where it does not — offered-and-broken is worse than not offered. It is off until
+asked for, silent the moment it is switched off, and it never speaks a step the
+guide has already passed.
+
+Marks were the one thing still returned and never drawn; the section above this
+one closes that.
+
+Current verification: 484 backend tests pass and 12 skip on SQLite, 149 web unit
+tests pass, and 55 browser scenarios pass in installed Chrome.
+
 ## Three findings from the frontend audit, and a bug one of them uncovered: 2026-09-14
 
 The audit of the web app named an error boundary as the one thing to fix: a
@@ -224,6 +301,45 @@ verification. That is the same refusal it already makes about watching.
 
 Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
+
+## Managed access, written and switched off: 2026-09-14 · V2.6
+
+Premium is usually built as a second pipeline: one path reading the user's key,
+another reading managed configuration. That is also the design that guarantees
+the two will drift, because every change has to be made twice and only one of
+them is exercised by the tests a developer runs locally.
+
+`app/providers/entitlement.py` refuses that shape. Entitlement changes exactly
+one thing — where the credential comes from — and everything downstream is
+identical: the same adapters, the same schema, the same guard, the same budgets,
+the same events. Resolution is written as a fall-through rather than a branch:
+managed when entitled and available, then the owner's own binding, then nothing,
+which the registry answers by reaching for the fixture and touching no network.
+
+Three properties have tests because they are the ones that would be expensive to
+get wrong. A managed credential reports that it is **not** the owner's, which is
+the single question an export or a deletion has to ask. Entitlement is read at
+resolution time, so a subscription lapsing mid-task moves the *next* call to the
+owner's own key rather than stopping a running guide — punishing a user for an
+accounting event is not a failure mode worth shipping. And no credential is
+printable, because a repr that leaked a key would put it in every log line that
+touched it.
+
+**Nothing here is on.** `managed_available()` requires both a provider selected
+under D01 and a credential root provisioned under D02, and no deployment has
+either; a deployment with one and not the other is treated as misconfigured
+rather than half-enabled. Every test that exercises the managed path constructs a
+deployment that does not exist. The plumbing is written and held to its
+promises; the switch is not ours to throw.
+
+With this, every phase of [22](22-guider-v2-architecture.md) has an
+implementation. What remains is not code: D01, D02, D05, D06, the native client
+and its allowlist, and the fact that **no request has ever reached a real
+provider**.
+
+Current verification on this branch: 429 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. V2.3 and V2.4 are in their own open pull
+requests; the counts reconcile as those merge.
 
 ## Finding it again, and taking a copy: 2026-09-14 · V2.5
 

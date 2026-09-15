@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     provider_id: str = ""
     provider_api_key: SecretStr | None = None
     provider_model: str = ""
+    # Managed (premium) access. Both halves are required and neither is
+    # configured on any deployment today: D01 has selected no provider for
+    # account mode, and D02 has provisioned no key management. A deployment with
+    # one and not the other is misconfigured, not half-enabled
+    # ([ADR-021](../../../docs/user-mode-guide/adr/021-managed-provider-mode.md)).
+    managed_provider_id: str = ""
+    managed_provider_key: SecretStr | None = None
+    managed_provider_model: str = ""
+    # Root for credential encryption. Without it, a credential cannot be stored
+    # at all — which is the correct refusal, because the alternative is plaintext.
+    credential_root: SecretStr | None = None
     allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     def check(self) -> None:

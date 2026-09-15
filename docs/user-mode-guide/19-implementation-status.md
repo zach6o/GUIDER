@@ -1,5 +1,112 @@
 # 19 · Implementation status and session handoff
 
+## One palette, two themes: 2026-09-15
+
+The frontend audit asked for dark mode and the answer was no, because the
+stylesheet carried a colour literal in every place a theme would have to be
+applied by hand — 329 of them, not the 260 the audit estimated, and clustering at
+a threshold nobody could see still left 190. A half-applied dark theme is white
+cards punched through a dark page, which is worse than no dark theme.
+
+So the literals became **33 semantic tokens**, and the stylesheets now contain
+none outside the palette block — a check that is one grep, and the reason a
+future colour cannot quietly escape the system. Light is defined on `:root` and
+dark redefines the same names under `prefers-color-scheme`. There is no toggle:
+the reader's system already knows the answer, and a control that can disagree
+with it is a preference to store, migrate and explain.
+
+Two pairs had to be separated rather than merged, and both were only visible once
+the dark theme existed. **`--text-on-accent` against `--text-on-stage`**: text on
+a filled accent flips when that accent goes from deep green to bright, while text
+on a terminal or a video stage does not, because those are dark in both themes —
+merged, the first person to switch their system to dark would have got dark text
+on a black terminal. And **`--island-tone` against `--island-ink`**: the same
+colour drew the island's ring and printed its status, but a ring carries a shape
+at 3:1 and a word needs 4.5:1, and the one value could not be both.
+
+The practice window in the screen-guide demo is deliberately *not* themed. It is
+a picture of somebody else's application, and the demo's own task is to switch it
+from light to dark; a simulation that arrived already dark would make the
+narration wrong before the user had touched anything. Its colours are literal,
+fixed, and commented as such.
+
+The contrast sweep is finished with the palette rather than beside it, because
+every colour now has one place to change. An in-browser audit walked every text
+node on seven surfaces in both themes, comparing each against the background it
+actually composites onto: `--text-muted`, `--text-faint`, `--accent` and
+`--accent-strong` moved, and both themes now report nothing below AA.
+
+Light rendering is unchanged where it mattered: the before-and-after screenshots
+differ only where a text colour was darkened for contrast.
+
+Current verification: 169 web unit tests pass and 62 browser scenarios pass in
+installed Chrome, two of them new — that the dark theme paints the page and the
+island rather than half of them, and that a step stays readable against it.
+
+## Older tasks, on request: 2026-09-15
+
+`GET /sessions` has paged by cursor since the history route was written, and the
+web asked for one page and stopped. A user with more than twenty tasks could see
+twenty of them, with nothing on screen to say the rest existed.
+
+The page now carries the cursor and appends. Appending rather than replacing is
+the point: the rows already read stay where the reader left them, and because the
+server pages by cursor rather than by offset, a task deleted between two requests
+cannot shift the rest of the list underneath them.
+
+Deleting the row the cursor names is the one case that needed thinking about. The
+next page is asked for by naming the session to continue after; if that session
+is in what was just deleted, the cursor points at nothing and the server would
+refuse it. So a delete that takes the cursor re-reads the list from the top
+instead, which is visible and correct rather than an error the user cannot act on.
+
+The browser demo pages too, at five rather than twenty, because a control nobody
+can reach in the demo is a control the browser suite never exercises.
+
+The API's filters — outcome, date range and the title-and-goal search added in
+V2.5 — are still not on the page. That is a design job as much as a wiring one
+and is listed as remaining rather than half-built.
+
+Current verification: 169 web unit tests pass and 60 browser scenarios pass in
+installed Chrome.
+
+## The keyboard, and a policy: 2026-09-15
+
+`aria-modal` was already on all three dialogs and it told Tab nothing. The third
+press moved focus behind an open dialog, into a page the user had been told they
+had left, and the way back was to keep pressing until it wrapped. A mouse never
+finds this; a keyboard finds nothing else.
+
+`src/a11y.ts` does three things and no more: focus moves into a dialog when it
+opens, Tab and Shift+Tab cycle inside it, and focus returns to whatever opened it
+when it closes — remembered at open time rather than searched for afterwards,
+because by then the button may be gone. Escape is offered separately, so a dialog
+that should not be dismissed by accident can decline it; all three of ours accept
+it, since none of them destroys anything by closing. The wrap-around is a pure
+function with its own tests, and the browser holds the rest.
+
+**The policy is one function, not three copies.** `src/csp.ts` derives it from
+where this build is allowed to talk to, and the dev server, the preview server
+and the built page all ask that one file. The development relaxation for Vite's
+inline modules and styles cannot reach a build, and a test fails if it does. The
+meta tag omits `frame-ancestors`, which a meta tag cannot carry — so the header
+is the one that matters and production hosting must send it.
+
+Writing the policy found the font. `style.css` imports a stylesheet from
+`fonts.googleapis.com`, which a strict `style-src` blocks outright; the origins
+are named rather than met with a wildcard, and self-hosting the face is the
+better end state. The API carries its own policy: it renders no page, so it is
+allowed nothing at all, on the error path as much as the ordinary one.
+
+Seven colours used for small text failed 4.5:1 against the backgrounds they
+actually sit on and are darkened. The rest were judged against their real
+backgrounds in the palette pass recorded above.
+
+Current verification: 168 web unit tests pass, 60 browser scenarios pass in
+installed Chrome — four new, covering the trap, Escape and focus return, the
+guide at 200% zoom on a small screen, and a page load with no policy violation
+in the console — and 487 backend tests pass and 12 skip on SQLite.
+
 ## The mark gets drawn: 2026-09-15
 
 The context tick has returned a mark since V2.3 and nothing put it on screen.
@@ -921,8 +1028,8 @@ SQLite checks are development evidence only. PostgreSQL concurrency, native PKCE
 3. Production encrypted private object storage, staged upload reconciliation, transactional deletion fault recovery, provider derivatives, multi-worker leases and distributed quotas. Current worker and per-owner serialization target one local API process; image/create/analysis quotas are implemented, but ingress/read/delete profiles and full audit persistence remain open.
 4. Complete PostgreSQL migrations and tests: native UUID/JSONB types, enum/check constraints, partial uniqueness, lineage FKs, outbox certification and durable deletion races. The initial migration uses portable development column types and composite child-owner FKs.
 5. Task/session/account erasure, full 30-day content retention, replay/audit/idempotency cleanup, orphan sweeper, deletion-failure retries and backup erasure ledger. The minute-based media sweeper handles image TTL, not the entire lifecycle model.
-6. Remaining phase-1 wire surface, including session upload alias; persistent screenshot inventory/recovery, resumable task routing, complete history pagination in the UI and durable terminal summaries. API history pagination exists; the web currently displays its first page. Priority pause and stop work; Resume/planner/verification are not implemented.
-7. Accessible sign-in modal focus trapping and exhaustive contrast/keyboard/200% zoom checks; CSP and deployment origin policies; end-to-end auth loss/sign-out/refresh cases.
+6. Remaining phase-1 wire surface, including session upload alias; persistent screenshot inventory/recovery, resumable task routing and durable terminal summaries. History pagination now reaches the UI; the API's filters and search do not yet. Priority pause and stop work; Resume/planner/verification are not implemented.
+7. Remaining accessibility work: end-to-end auth loss/sign-out/refresh cases. Focus trapping, Escape, the 200% zoom check, the contrast sweep in both themes and the Content-Security-Policy are implemented; **production hosting must send the policy as a header**, since a meta tag cannot carry `frame-ancestors`.
 8. Native build and synthetic PKCE spike. The WPF scaffold has no capture, token handling or overlay feature.
 
 Production startup is hard-gated in `Settings.check()`. Do not remove the gate solely to deploy this preview.

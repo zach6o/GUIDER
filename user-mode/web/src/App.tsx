@@ -10,6 +10,7 @@ import { ImageEditor } from './ImageEditor';
 // loads when someone actually asks for it.
 const LiveGuide = lazy(() => import('./LiveGuide').then(module => ({ default: module.LiveGuide })));
 import { prepareImage } from './image';
+import { useFocusTrap } from './a11y';
 import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, type FloatingWindow } from './overlay/pip';
 import {
@@ -68,6 +69,8 @@ export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  // The session the next page continues after, or null when the list is whole.
+  const [moreHistory, setMoreHistory] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -92,6 +95,8 @@ export default function App() {
   const watchVideo = useRef<HTMLVideoElement>(null);
   const markLayer = useRef<HTMLDivElement>(null);
   const previewStage = useRef<HTMLDivElement>(null);
+  const authDialog = useRef<HTMLElement>(null);
+  const deleteDialog = useRef<HTMLDivElement>(null);
   const mirrorVideo = useRef<HTMLVideoElement>(null);
   const capture = useRef(new ScreenCapture());
   // Its own capture, kept apart from the observation one on purpose: mirroring
@@ -113,7 +118,10 @@ export default function App() {
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
   useEffect(() => {
     if (!signedIn) return;
-    void api.history().then(data => setHistory(data.items)).catch(() => {});
+    void api.history().then(page => {
+      setHistory(page.items);
+      setMoreHistory(page.next_cursor);
+    }).catch(() => {});
   }, [signedIn, page, task]);
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
@@ -287,6 +295,11 @@ export default function App() {
     speaker.current?.speakOnce(spokenText(instruction));
   }, [speaking, live.state.instruction]);
   useEffect(() => { guide.current = live; });
+  // A dialog holds the keyboard while it is open and hands it back afterwards.
+  // Escape closes both: neither destroys anything by closing, and the deletion
+  // one only closes the question, never answers it.
+  useFocusTrap(authDialog, authOpen, { onEscape: () => setAuthOpen(false) });
+  useFocusTrap(deleteDialog, Boolean(confirmDelete), { onEscape: () => setConfirmDelete(null) });
   // Watching is on exactly while the server is counting frames for this session.
   const watching = framesObserved !== null;
   // Guider's copy of the watched window is the only surface a browser is allowed
@@ -466,7 +479,17 @@ export default function App() {
         setScreenshot(null); setAnalysis(null); setDraft(null); setImageUrl('');
         setGuiding(false); live.close();
       }
+      const removedTheCursor = history.some(row =>
+        row.session.task_id === item.session.task_id && row.session.id === moreHistory);
       setHistory(current => current.filter(row => row.session.task_id !== item.session.task_id));
+      // The next page is asked for by naming the session to continue after. If
+      // that session was in what just went, the list is read again from the top
+      // rather than left holding a cursor to something that no longer exists.
+      if (removedTheCursor) {
+        const first = await api.history();
+        setHistory(first.items);
+        setMoreHistory(first.next_cursor);
+      }
       setNotice(`Deleted. Receipt ${receipt.id.slice(0, 8)} — nothing of that task is left.`);
     });
   }
@@ -735,7 +758,20 @@ export default function App() {
         {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-row" key={item.session.id}>
           <button disabled={!!busy} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>
           <button className="icon-button history-delete" disabled={!!busy} aria-label={`Delete the task ${item.task_title}`} onClick={() => setConfirmDelete(item)}><Trash2 size={16} /></button>
-        </div>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
+        </div>)}
+          {moreHistory && <button
+            className="text-button history-more"
+            disabled={!!busy}
+            onClick={() => void work('Loading older tasks…', async () => {
+              const next = await api.history(moreHistory);
+              // Appended, never replaced: the page above stays where the reader
+              // left it, and a task deleted between two pages cannot shift the
+              // rest of the list underneath them.
+              setHistory(current => [...current, ...next.items]);
+              setMoreHistory(next.next_cursor);
+            })}
+          >{busy === 'Loading older tasks…' ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <><History size={16} /> Show older tasks</>}</button>}
+        </div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
         {page === 'privacy' && <div className="simple-page"><span className="eyebrow">ALWAYS YOUR CALL</span><h1>A guide. On your terms.</h1><p className="muted">You choose the context. You take the actions.</p><div className="privacy-sections"><article><EyeOff size={23} /><div><h2>Observation is off.</h2><p>Live screen guide can preview a window or tab you choose. It sends only frames you review and submit to OpenAI. Sharing stops when you leave that view or hide Guider. There is no microphone, recording, typing, or clicking.</p></div></article><article><ShieldCheck size={23} /><div><h2>{isDemo ? 'This demo stays in your tab.' : 'Screenshots are private.'}</h2><p>{isDemo ? 'Your task and image live in browser memory. They are not sent to the API or an AI provider, and they disappear when you refresh or close this tab.' : 'Images go to your configured Guider development backend, expire within 24 hours, and can be deleted with their analysis. The local development storage is not approved for real customer media.'}</p></div></article><article><ScanLine size={23} /><div><h2>OpenAI when you connect.</h2><p>Live screen guide uses your OpenAI API key for actual visual guidance. You review each outgoing frame. The original screenshot demo still uses a fixed example. Cloud keys are kept only in local backend memory and cleared on disconnect or expiry.</p></div></article><article><Trash2 size={23} /><div><h2>Delete what you share.</h2><p>Remove a screenshot with the trash button beside it. Delete a whole task from your history — that takes every session, plan, step and image under it. Deleting your account removes all of it at once and stops every signed-in device immediately.</p>
           {!isDemo && <div className="danger-zone">
             <label htmlFor="delete-phrase">Type <code>delete-my-guide-account</code> to confirm</label>
@@ -839,7 +875,7 @@ export default function App() {
       onSkip={() => void live.skip()}
       onClose={stopGuiding}
     />}
-    {confirmDelete && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    {confirmDelete && <div ref={deleteDialog} tabIndex={-1} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title">
       <div className="confirm-card">
         <h2 id="delete-title">Delete “{confirmDelete.task_title}”?</h2>
         <p>Every session, plan, step and image under this task goes with it. This cannot be undone.</p>
@@ -855,7 +891,7 @@ export default function App() {
       onCancel={() => { setWatchOpen(false); capture.current.stop(); }}
     />}
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />
-    {authOpen && <div className="modal-backdrop"><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
+    {authOpen && <div className="modal-backdrop"><section ref={authDialog} tabIndex={-1} className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
       if (codeSent) { const result = await supabase!.auth.verifyOtp({ email, token: code, type: 'email' }); if (result.error) throw result.error; setAuthOpen(false); setCode(''); setCodeSent(false); }
       else { const result = await supabase!.auth.signInWithOtp({ email }); if (result.error) throw result.error; setCodeSent(true); }
     }); }}><label>Email address<input type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required disabled={codeSent} /></label>{codeSent && <label>Email code<input value={code} inputMode="numeric" autoComplete="one-time-code" onChange={event => setCode(event.target.value)} required minLength={6} maxLength={8} /></label>}<button className="primary" disabled={!!busy}>{busy || (codeSent ? 'Verify code' : 'Email me a code')}<ArrowRight size={17} /></button></form>{error && <p className="error" role="alert">{error}</p>}<small>Your session stays in memory and ends when you close or refresh this page.</small></section></div>}

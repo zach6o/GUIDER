@@ -38,7 +38,7 @@ const post = <T,>(path: string, body: unknown) => request<T>(path, { method: 'PO
 const remote: GuideApi = {
   create: input => post('/tasks', input),
   importConversation: (text, source) => post('/imports/conversations', { text, source }),
-  history: () => request('/sessions'),
+  history: cursor => request(`/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   task: id => request(`/tasks/${id}`),
   session: id => request(`/sessions/${id}`),
   upload: (task, session, file, replaces) => {

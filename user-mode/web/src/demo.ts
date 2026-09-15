@@ -3,6 +3,9 @@ import type {
   Operation, Outcome, Plan, Screenshot, SelfReported, Session, Step, Summary, Task,
 } from './types';
 
+/** Small on purpose: a demo with three tasks should still show the control that
+ *  asks for more, because a control nobody ever sees is a control nobody tests. */
+const DEMO_HISTORY_PAGE = 5;
 const tasks = new Map<string, Task>();
 const sessions = new Map<string, Session>();
 const images = new Map<string, { blob: Blob; screenshot: Screenshot }>();
@@ -353,9 +356,18 @@ export const demoApi: GuideApi = {
       },
     });
   },
-  async history() {
-    return clone({ items: [...sessions.values()].reverse().map(session => ({ session,
-      task_title: requireItem(tasks, session.task_id).title })) });
+  async history(cursor) {
+    // Paged like the server's, so the page that asks for more is exercised here
+    // too rather than only against a backend the demo never reaches.
+    const all = [...sessions.values()].reverse().map(session => ({ session,
+      task_title: requireItem(tasks, session.task_id).title }));
+    const start = cursor ? all.findIndex(item => item.session.id === cursor) + 1 : 0;
+    const page = all.slice(start, start + DEMO_HISTORY_PAGE);
+    const last = page[page.length - 1];
+    return clone({
+      items: page,
+      next_cursor: last && start + page.length < all.length ? last.session.id : null,
+    });
   },
   async task(id) { return clone(requireItem(tasks, id)); },
   async session(id) { return clone(requireItem(sessions, id)); },

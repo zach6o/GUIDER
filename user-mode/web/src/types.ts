@@ -131,6 +131,14 @@ export interface ContextTick {
   mark: SeenMark | null;
 }
 
+export interface HistoryPage {
+  items: { session: Session; task_title: string }[];
+  /** The session to continue after, or null when this is the last page. The
+   *  server pages by cursor rather than by number, so a task deleted between two
+   *  pages cannot shift the rest of the list under the reader. */
+  next_cursor: string | null;
+}
+
 export interface Resumed {
   session: Session;
   /** Set when the guide needs a fresh instruction before anything waits on the
@@ -141,7 +149,7 @@ export interface Resumed {
 export interface GuideApi {
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
   importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
-  history(): Promise<{ items: { session: Session; task_title: string }[] }>;
+  history(cursor?: string): Promise<HistoryPage>;
   task(id: string): Promise<Task>;
   session(id: string): Promise<Session>;
   upload(task: Task, session: Session, file: Blob, replaces?: Screenshot): Promise<{ screenshot: Screenshot; session: Session }>;

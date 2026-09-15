@@ -86,6 +86,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        # This API answers with JSON and with private image bytes, and nothing
+        # else. It has no page to render, so the policy that suits it is the one
+        # that permits nothing at all: a response that somehow reached a browser
+        # as a document could then load nothing and be framed nowhere.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
         # Content-free access metadata; no headers, query strings, file names or bodies.
         logging.getLogger("guider.audit").info(
             "request=%s method=%s status=%s",

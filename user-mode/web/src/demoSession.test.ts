@@ -330,3 +330,24 @@ describe('ending a task', () => {
     expect(await demoApi.summary(session.id)).toBeNull();
   });
 });
+
+describe('history, one page at a time', () => {
+  it('hands back a cursor only while there is more to read', async () => {
+    // The demo pages at five. Six tasks is the smallest number that proves the
+    // control appears, and that following it reaches the last one.
+    for (let made = 0; made < 6; made++) {
+      await demoApi.create({
+        goal: `Task number ${made}`, category: 'debug', application_key: 'powershell',
+      });
+    }
+    const first = await demoApi.history();
+    expect(first.items).toHaveLength(5);
+    expect(first.next_cursor).toBe(first.items[4].session.id);
+
+    const second = await demoApi.history(first.next_cursor!);
+    expect(second.items.length).toBeGreaterThan(0);
+    // No page repeats a row: the cursor names the session to continue *after*.
+    const ids = new Set([...first.items, ...second.items].map(item => item.session.id));
+    expect(ids.size).toBe(first.items.length + second.items.length);
+  });
+});

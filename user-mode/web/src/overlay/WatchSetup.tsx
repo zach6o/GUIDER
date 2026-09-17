@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import { NOTICE, NOTICE_COUNTER_PROMISE, NOTICE_SUMMARY, NOTICE_VERSION } from '../guide/consent';
 import type { MaskArea } from './frameSource';
+import { useFocusTrap } from '../a11y';
 
 export interface WatchSetupProps {
   /** Opens the browser's own window picker. Must be called inside the click. */
@@ -32,6 +33,10 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
   const video = useRef<HTMLVideoElement>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const live = useRef<MediaStream | null>(null);
+  const dialog = useRef<HTMLElement>(null);
+  // Escape is the same as "Not now": it cancels the setup, which stops the
+  // chosen window through the caller. Nothing has been switched on to undo.
+  useFocusTrap(dialog, true, { onEscape: onCancel });
 
   useEffect(() => () => { live.current?.getTracks().forEach(track => track.stop()); }, []);
 
@@ -85,7 +90,7 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
   }
 
   return <div className="modal-backdrop">
-    <section className="watch-setup" role="dialog" aria-modal="true" aria-labelledby="watch-title">
+    <section ref={dialog} tabIndex={-1} className="watch-setup" role="dialog" aria-modal="true" aria-labelledby="watch-title">
       <button className="icon-button modal-close" aria-label="Close" onClick={onCancel}>
         <X size={20} />
       </button>

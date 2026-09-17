@@ -105,6 +105,40 @@ export interface FeedbackRecorded {
   verification_withdrawn: boolean;
 }
 
+export interface SeenMark {
+  kind: 'circle' | 'underline' | 'spotlight' | 'pointer';
+  box: [number, number, number, number];
+  label: string;
+}
+
+export interface ContextTick {
+  stage: string;
+  application: string;
+  application_matches_expected: boolean;
+  screen: string;
+  dialog: string | null;
+  error_text: string | null;
+  confidence: number;
+  digest: string;
+  changed: boolean;
+  note: string;
+  observation_calls_remaining: number;
+  session: Session;
+  /** What the guide decided to do about this screen. `none` is the common case. */
+  action: 'none' | 'check' | 'redirect' | 'wrong_application' | 'dialog' | 'offer_skip' | 'unreadable';
+  message: string;
+  offer: { step_ids: string[]; titles: string[] } | null;
+  mark: SeenMark | null;
+}
+
+export interface HistoryPage {
+  items: { session: Session; task_title: string }[];
+  /** The session to continue after, or null when this is the last page. The
+   *  server pages by cursor rather than by number, so a task deleted between two
+   *  pages cannot shift the rest of the list under the reader. */
+  next_cursor: string | null;
+}
+
 export interface Resumed {
   session: Session;
   /** Set when the guide needs a fresh instruction before anything waits on the
@@ -115,7 +149,7 @@ export interface Resumed {
 export interface GuideApi {
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
   importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
-  history(): Promise<{ items: { session: Session; task_title: string }[] }>;
+  history(cursor?: string): Promise<HistoryPage>;
   task(id: string): Promise<Task>;
   session(id: string): Promise<Session>;
   upload(task: Task, session: Session, file: Blob, replaces?: Screenshot): Promise<{ screenshot: Screenshot; session: Session }>;
@@ -144,6 +178,8 @@ export interface GuideApi {
   startWatching(session: Session, consentVersion: string): Promise<ObservationState>;
   stopWatching(id: string): Promise<ObservationState>;
   observe(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ObservationTick>;
+  observeContext(session: Session, imageBase64: string, admittedAt: string, signal?: AbortSignal): Promise<ContextTick>;
+  skipForward(session: Session, stepId: string, stepIds: string[]): Promise<{ session: Session }>;
   reportIncorrect(session: Session, stepId: string, text: string): Promise<FeedbackRecorded>;
   resume(session: Session, mode: 'screenshot_only' | 'window'): Promise<Resumed>;
   retryStep(session: Session, stepId: string, reason: string): Promise<{ operation_id: string; session: Session }>;

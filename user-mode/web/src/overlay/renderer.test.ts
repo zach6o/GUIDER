@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { labelSide, MarkPayload, pictureBox, place } from './renderer';
+import { labelSide, labelTop, MarkPayload, pictureBox, place } from './renderer';
 
 const mark = (box: [number, number, number, number]): MarkPayload =>
   ({ kind: 'circle', box, label: 'Download' });
@@ -71,5 +71,16 @@ describe('placing the label', () => {
 
   it('goes inside only when there is nowhere else', () => {
     expect(labelSide({ left: 0, top: 2, width: 100, height: 490 }, picture)).toBe('inside');
+  });
+
+  it('starts a label below the box where the box ends', () => {
+    const box = { left: 0, top: 4, width: 100, height: 40 };
+    expect(labelTop(box, 'below')).toBe(44);
+  });
+
+  it('leaves the rest of the lifting to the stylesheet', () => {
+    const box = { left: 0, top: 200, width: 100, height: 40 };
+    expect(labelTop(box, 'above')).toBe(200);
+    expect(labelTop(box, 'inside')).toBe(200);
   });
 });

@@ -1,5 +1,189 @@
 # 19 · Implementation status and session handoff
 
+## One palette, two themes: 2026-09-15
+
+The frontend audit asked for dark mode and the answer was no, because the
+stylesheet carried a colour literal in every place a theme would have to be
+applied by hand — 329 of them, not the 260 the audit estimated, and clustering at
+a threshold nobody could see still left 190. A half-applied dark theme is white
+cards punched through a dark page, which is worse than no dark theme.
+
+So the literals became **33 semantic tokens**, and the stylesheets now contain
+none outside the palette block — a check that is one grep, and the reason a
+future colour cannot quietly escape the system. Light is defined on `:root` and
+dark redefines the same names under `prefers-color-scheme`. There is no toggle:
+the reader's system already knows the answer, and a control that can disagree
+with it is a preference to store, migrate and explain.
+
+Two pairs had to be separated rather than merged, and both were only visible once
+the dark theme existed. **`--text-on-accent` against `--text-on-stage`**: text on
+a filled accent flips when that accent goes from deep green to bright, while text
+on a terminal or a video stage does not, because those are dark in both themes —
+merged, the first person to switch their system to dark would have got dark text
+on a black terminal. And **`--island-tone` against `--island-ink`**: the same
+colour drew the island's ring and printed its status, but a ring carries a shape
+at 3:1 and a word needs 4.5:1, and the one value could not be both.
+
+The practice window in the screen-guide demo is deliberately *not* themed. It is
+a picture of somebody else's application, and the demo's own task is to switch it
+from light to dark; a simulation that arrived already dark would make the
+narration wrong before the user had touched anything. Its colours are literal,
+fixed, and commented as such.
+
+The contrast sweep is finished with the palette rather than beside it, because
+every colour now has one place to change. An in-browser audit walked every text
+node on seven surfaces in both themes, comparing each against the background it
+actually composites onto: `--text-muted`, `--text-faint`, `--accent` and
+`--accent-strong` moved, and both themes now report nothing below AA.
+
+Light rendering is unchanged where it mattered: the before-and-after screenshots
+differ only where a text colour was darkened for contrast.
+
+Current verification: 169 web unit tests pass and 62 browser scenarios pass in
+installed Chrome, two of them new — that the dark theme paints the page and the
+island rather than half of them, and that a step stays readable against it.
+
+## Older tasks, on request: 2026-09-15
+
+`GET /sessions` has paged by cursor since the history route was written, and the
+web asked for one page and stopped. A user with more than twenty tasks could see
+twenty of them, with nothing on screen to say the rest existed.
+
+The page now carries the cursor and appends. Appending rather than replacing is
+the point: the rows already read stay where the reader left them, and because the
+server pages by cursor rather than by offset, a task deleted between two requests
+cannot shift the rest of the list underneath them.
+
+Deleting the row the cursor names is the one case that needed thinking about. The
+next page is asked for by naming the session to continue after; if that session
+is in what was just deleted, the cursor points at nothing and the server would
+refuse it. So a delete that takes the cursor re-reads the list from the top
+instead, which is visible and correct rather than an error the user cannot act on.
+
+The browser demo pages too, at five rather than twenty, because a control nobody
+can reach in the demo is a control the browser suite never exercises.
+
+The API's filters — outcome, date range and the title-and-goal search added in
+V2.5 — are still not on the page. That is a design job as much as a wiring one
+and is listed as remaining rather than half-built.
+
+Current verification: 169 web unit tests pass and 60 browser scenarios pass in
+installed Chrome.
+
+## The keyboard, and a policy: 2026-09-15
+
+`aria-modal` was already on all three dialogs and it told Tab nothing. The third
+press moved focus behind an open dialog, into a page the user had been told they
+had left, and the way back was to keep pressing until it wrapped. A mouse never
+finds this; a keyboard finds nothing else.
+
+`src/a11y.ts` does three things and no more: focus moves into a dialog when it
+opens, Tab and Shift+Tab cycle inside it, and focus returns to whatever opened it
+when it closes — remembered at open time rather than searched for afterwards,
+because by then the button may be gone. Escape is offered separately, so a dialog
+that should not be dismissed by accident can decline it; all three of ours accept
+it, since none of them destroys anything by closing. The wrap-around is a pure
+function with its own tests, and the browser holds the rest.
+
+**The policy is one function, not three copies.** `src/csp.ts` derives it from
+where this build is allowed to talk to, and the dev server, the preview server
+and the built page all ask that one file. The development relaxation for Vite's
+inline modules and styles cannot reach a build, and a test fails if it does. The
+meta tag omits `frame-ancestors`, which a meta tag cannot carry — so the header
+is the one that matters and production hosting must send it.
+
+Writing the policy found the font. `style.css` imports a stylesheet from
+`fonts.googleapis.com`, which a strict `style-src` blocks outright; the origins
+are named rather than met with a wildcard, and self-hosting the face is the
+better end state. The API carries its own policy: it renders no page, so it is
+allowed nothing at all, on the error path as much as the ordinary one.
+
+Seven colours used for small text failed 4.5:1 against the backgrounds they
+actually sit on and are darkened. The rest were judged against their real
+backgrounds in the palette pass recorded above.
+
+Current verification: 168 web unit tests pass, 60 browser scenarios pass in
+installed Chrome — four new, covering the trap, Escape and focus return, the
+guide at 200% zoom on a small screen, and a page load with no policy violation
+in the console — and 487 backend tests pass and 12 skip on SQLite.
+
+## The mark gets drawn: 2026-09-15
+
+The context tick has returned a mark since V2.3 and nothing put it on screen.
+The renderer existed with its tests; what was missing was a surface, and the
+surface was sitting off-screen the whole time — the watched window's own video
+element, mounted but hidden because until now nothing needed to look at it.
+
+[ADR-020](adr/020-overlay-surfaces.md) says the preview overlay draws on
+*Guider's copy of the shared window*, and that is exactly what that element is.
+So it is now shown while watching is on, in a panel beside the guide, with the
+mark drawn over it. The separate mirror is a different capture of a possibly
+different window and is not a place a mark may be drawn: putting one there would
+be a ring on the wrong picture.
+
+The element is never unmounted, only moved off-screen with `sr-only` when
+watching is off — a remounted `<video>` loses the stream it is playing, and the
+stream is the thing watching depends on. Both of Guider's copies of a window now
+live in one fixed column, so a mirror and a preview cannot land on top of each
+other.
+
+Hidden areas are painted over the preview as well. What the user chose not to
+send should not be on display either, and both the marks and the masks are
+placed against the *picture* rather than the element — `object-fit: contain`
+letterboxes, and a box placed against the element would drift by the bars. One
+paint pass sets the picture's rectangle as custom properties and draws the mark,
+and it runs again on resize, on a DPI or zoom change and when the video reports
+its dimensions. The mark itself never changes; only the multiplier does.
+
+A mark is still advisory. Most ticks carry none, the instruction says where to
+look in words regardless, and the panel says so where the user can read it.
+
+Current verification: 151 web unit tests pass (two new, covering where a label
+sits relative to its box) and 56 browser scenarios pass in installed Chrome. The
+new scenario holds that the preview is absent until something is watched and
+that its video element is mounted all the same. The demo has no vision provider,
+so no browser test can produce a real mark; the drawing itself remains covered
+by the renderer's unit tests.
+
+## V2 reaches the screen: 2026-09-15
+
+Every V2 phase had an implementation and none of it was reachable. The Context
+Engine answered a route nobody called; the idle watcher, the speaker and the
+overlay renderer were modules with tests and no callers. This connects them.
+
+**One frame, two questions.** The watch loop already encodes a masked frame once
+per admitted tick; it now sends that same encoding to `/context` as well as
+`/observe`. Encoding twice would double the work on the user's machine for no
+more information, and the two calls already draw on one budget server-side.
+Context is an improvement and never a requirement: if the context call fails, the
+tick carries on and the step is still checked, because a guide that stopped
+checking steps because it could not describe the screen would be worse than one
+that only checks steps.
+
+The island now says what the guide believes, in the user's words, and only when
+something is wrong — the wrong application, a dialog in the way, a screen that
+cannot be read. Most ticks say nothing has changed and the island is untouched,
+which is the whole point of the digest.
+
+A forward skip is offered with every step it would settle **named**, and accepted
+by a separate act: the offer is a tick, the acceptance is a route. The copy says
+what the record will say — *skipped*, not checked and not the user's word.
+
+Idle staging runs only while something is watching, because with watching off
+there is no screen to be quiet and the guide waits indefinitely by design. The
+five-minute stage stops watching through the ordinary stop and keeps the place.
+
+Reading aloud is offered where the browser has speech synthesis and simply absent
+where it does not — offered-and-broken is worse than not offered. It is off until
+asked for, silent the moment it is switched off, and it never speaks a step the
+guide has already passed.
+
+Marks were the one thing still returned and never drawn; the section above this
+one closes that.
+
+Current verification: 484 backend tests pass and 12 skip on SQLite, 149 web unit
+tests pass, and 55 browser scenarios pass in installed Chrome.
+
 ## Three findings from the frontend audit, and a bug one of them uncovered: 2026-09-14
 
 The audit of the web app named an error boundary as the one thing to fix: a
@@ -224,6 +408,45 @@ verification. That is the same refusal it already makes about watching.
 
 Current verification: 362 backend tests pass and 12 skip on SQLite, 120 web unit
 tests pass, and 53 browser scenarios pass in installed Chrome.
+
+## Managed access, written and switched off: 2026-09-14 · V2.6
+
+Premium is usually built as a second pipeline: one path reading the user's key,
+another reading managed configuration. That is also the design that guarantees
+the two will drift, because every change has to be made twice and only one of
+them is exercised by the tests a developer runs locally.
+
+`app/providers/entitlement.py` refuses that shape. Entitlement changes exactly
+one thing — where the credential comes from — and everything downstream is
+identical: the same adapters, the same schema, the same guard, the same budgets,
+the same events. Resolution is written as a fall-through rather than a branch:
+managed when entitled and available, then the owner's own binding, then nothing,
+which the registry answers by reaching for the fixture and touching no network.
+
+Three properties have tests because they are the ones that would be expensive to
+get wrong. A managed credential reports that it is **not** the owner's, which is
+the single question an export or a deletion has to ask. Entitlement is read at
+resolution time, so a subscription lapsing mid-task moves the *next* call to the
+owner's own key rather than stopping a running guide — punishing a user for an
+accounting event is not a failure mode worth shipping. And no credential is
+printable, because a repr that leaked a key would put it in every log line that
+touched it.
+
+**Nothing here is on.** `managed_available()` requires both a provider selected
+under D01 and a credential root provisioned under D02, and no deployment has
+either; a deployment with one and not the other is treated as misconfigured
+rather than half-enabled. Every test that exercises the managed path constructs a
+deployment that does not exist. The plumbing is written and held to its
+promises; the switch is not ours to throw.
+
+With this, every phase of [22](22-guider-v2-architecture.md) has an
+implementation. What remains is not code: D01, D02, D05, D06, the native client
+and its allowlist, and the fact that **no request has ever reached a real
+provider**.
+
+Current verification on this branch: 429 backend tests pass and 12 skip on
+SQLite, and 128 web unit tests pass. V2.3 and V2.4 are in their own open pull
+requests; the counts reconcile as those merge.
 
 ## Finding it again, and taking a copy: 2026-09-14 · V2.5
 
@@ -805,8 +1028,8 @@ SQLite checks are development evidence only. PostgreSQL concurrency, native PKCE
 3. Production encrypted private object storage, staged upload reconciliation, transactional deletion fault recovery, provider derivatives, multi-worker leases and distributed quotas. Current worker and per-owner serialization target one local API process; image/create/analysis quotas are implemented, but ingress/read/delete profiles and full audit persistence remain open.
 4. Complete PostgreSQL migrations and tests: native UUID/JSONB types, enum/check constraints, partial uniqueness, lineage FKs, outbox certification and durable deletion races. The initial migration uses portable development column types and composite child-owner FKs.
 5. Task/session/account erasure, full 30-day content retention, replay/audit/idempotency cleanup, orphan sweeper, deletion-failure retries and backup erasure ledger. The minute-based media sweeper handles image TTL, not the entire lifecycle model.
-6. Remaining phase-1 wire surface, including session upload alias; persistent screenshot inventory/recovery, resumable task routing, complete history pagination in the UI and durable terminal summaries. API history pagination exists; the web currently displays its first page. Priority pause and stop work; Resume/planner/verification are not implemented.
-7. Accessible sign-in modal focus trapping and exhaustive contrast/keyboard/200% zoom checks; CSP and deployment origin policies; end-to-end auth loss/sign-out/refresh cases.
+6. Remaining phase-1 wire surface, including session upload alias; persistent screenshot inventory/recovery, resumable task routing and durable terminal summaries. History pagination now reaches the UI; the API's filters and search do not yet. Priority pause and stop work; Resume/planner/verification are not implemented.
+7. Remaining accessibility work: end-to-end auth loss/sign-out/refresh cases. Focus trapping, Escape, the 200% zoom check, the contrast sweep in both themes and the Content-Security-Policy are implemented; **production hosting must send the policy as a header**, since a meta tag cannot carry `frame-ancestors`.
 8. Native build and synthetic PKCE spike. The WPF scaffold has no capture, token handling or overlay feature.
 
 Production startup is hard-gated in `Settings.check()`. Do not remove the gate solely to deploy this preview.

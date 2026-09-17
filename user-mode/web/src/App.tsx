@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, CircleHelp,
-  ClipboardPaste, Code2, Compass, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
+  ClipboardPaste, Code2, Compass, Eye, EyeOff, FileImage, GitBranch, History, ImagePlus, LoaderCircle,
   ListChecks, LogOut, MonitorUp, Pause, Play, Plus, ScanLine, ShieldCheck, Square, Terminal,
   Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
@@ -10,6 +10,7 @@ import { ImageEditor } from './ImageEditor';
 // loads when someone actually asks for it.
 const LiveGuide = lazy(() => import('./LiveGuide').then(module => ({ default: module.LiveGuide })));
 import { prepareImage } from './image';
+import { useFocusTrap } from './a11y';
 import { GuideIsland } from './overlay/GuideIsland';
 import { closeFloatingWindow, openFloatingWindow, type FloatingWindow } from './overlay/pip';
 import {
@@ -18,11 +19,15 @@ import {
 import type { IslandState } from './overlay/states';
 import { islandStateFor, stuckMessage, useLiveGuide } from './guide/live';
 import { Watcher } from './guide/watching';
+import { IdleWatcher } from './guide/idle';
+import { browserSpeaker, spokenText } from './guide/speech';
 import { createFrameSource, type MaskArea } from './overlay/frameSource';
+import { draw, pictureBox } from './overlay/renderer';
 import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
 import type {
-  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, Session, Summary, Task,
+  Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, SeenMark, Session,
+  Summary, Task,
 } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -64,6 +69,8 @@ export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  // The session the next page continues after, or null when the list is whole.
+  const [moreHistory, setMoreHistory] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -71,6 +78,14 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [surface, setSurface] = useState<GuideSurface>(defaultSurface);
   const [confirmDelete, setConfirmDelete] = useState<HistoryItem | null>(null);
+  const [contextMessage, setContextMessage] = useState('');
+  const [skipOffer, setSkipOffer] = useState<{ titles: string[]; stepIds: string[] } | null>(null);
+  // Where the guide is pointing on the frame it last read, and the areas the
+  // user painted out. Both belong to the watched window, so both are drawn on
+  // Guider's copy of it and nowhere else (ADR-020).
+  const [mark, setMark] = useState<SeenMark | null>(null);
+  const [watchMasks, setWatchMasks] = useState<readonly MaskArea[]>([]);
+  const [speaking, setSpeaking] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState('');
   const [mirroring, setMirroring] = useState(false);
   const [email, setEmail] = useState('');
@@ -78,6 +93,10 @@ export default function App() {
   const [codeSent, setCodeSent] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const watchVideo = useRef<HTMLVideoElement>(null);
+  const markLayer = useRef<HTMLDivElement>(null);
+  const previewStage = useRef<HTMLDivElement>(null);
+  const authDialog = useRef<HTMLElement>(null);
+  const deleteDialog = useRef<HTMLDivElement>(null);
   const mirrorVideo = useRef<HTMLVideoElement>(null);
   const capture = useRef(new ScreenCapture());
   // Its own capture, kept apart from the observation one on purpose: mirroring
@@ -85,6 +104,8 @@ export default function App() {
   // stream between them would quietly make the first imply the second.
   const mirror = useRef(new ScreenCapture());
   const watcher = useRef<Watcher | null>(null);
+  const idle = useRef<IdleWatcher | null>(null);
+  const speaker = useRef(browserSpeaker());
   const goalInput = useRef<HTMLTextAreaElement>(null);
   const generation = useRef(0);
   const actionSequence = useRef(0);
@@ -97,11 +118,15 @@ export default function App() {
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
   useEffect(() => {
     if (!signedIn) return;
-    void api.history().then(data => setHistory(data.items)).catch(() => {});
+    void api.history().then(page => {
+      setHistory(page.items);
+      setMoreHistory(page.next_cursor);
+    }).catch(() => {});
   }, [signedIn, page, task]);
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
   useEffect(() => () => { mirror.current.stop(); }, []);
+  useEffect(() => () => { speaker.current?.cancel(); }, []);
   // Watching must not outlive the page that is doing it. Without this, a crash
   // that unmounts the tree — or a navigation away — leaves the loop encoding
   // frames for a guide nobody is looking at, which is exactly what the error
@@ -262,7 +287,52 @@ export default function App() {
   // accepts a claim and a self-report.
   const live = useLiveGuide(api, session);
   const guide = useRef(live);
+  // Voice follows the instruction on screen. Off unless asked for, silent the
+  // moment it is switched off, and never queued behind a step already passed.
+  useEffect(() => {
+    const instruction = live.state.instruction;
+    if (!speaking || !instruction) { speaker.current?.cancel(); return; }
+    speaker.current?.speakOnce(spokenText(instruction));
+  }, [speaking, live.state.instruction]);
   useEffect(() => { guide.current = live; });
+  // A dialog holds the keyboard while it is open and hands it back afterwards.
+  // Escape closes both: neither destroys anything by closing, and the deletion
+  // one only closes the question, never answers it.
+  useFocusTrap(authDialog, authOpen, { onEscape: () => setAuthOpen(false) });
+  useFocusTrap(deleteDialog, Boolean(confirmDelete), { onEscape: () => setConfirmDelete(null) });
+  // Watching is on exactly while the server is counting frames for this session.
+  const watching = framesObserved !== null;
+  // Guider's copy of the watched window is the only surface a browser is allowed
+  // to draw a mark on (ADR-020), and the mark arrives in frame coordinates.
+  // Anything that moves the picture inside its element — a resize, a zoom, a
+  // monitor with another DPI — changes the multiplier and never the mark, so
+  // the answer to all of them is to place it again.
+  useEffect(() => {
+    const layer = markLayer.current;
+    const stage = previewStage.current;
+    const video = watchVideo.current;
+    if (!layer || !stage || !video) return;
+    const paint = () => {
+      // Hidden areas are fractions of the frame as well, so they are placed
+      // against the picture rather than the element for the same reason.
+      const picture = pictureBox(video, video.videoWidth, video.videoHeight);
+      stage.style.setProperty('--picture-left', `${picture.left}px`);
+      stage.style.setProperty('--picture-top', `${picture.top}px`);
+      stage.style.setProperty('--picture-width', `${picture.width}px`);
+      stage.style.setProperty('--picture-height', `${picture.height}px`);
+      draw(layer, watching ? mark : null, video);
+    };
+    paint();
+    video.addEventListener('loadedmetadata', paint);
+    window.addEventListener('resize', paint);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(paint);
+    observer?.observe(stage);
+    return () => {
+      video.removeEventListener('loadedmetadata', paint);
+      window.removeEventListener('resize', paint);
+      observer?.disconnect();
+    };
+  }, [mark, watching, watchMasks]);
   const guideSteps = (plan?.steps ?? []).filter(step => step.policy_disposition !== 'block');
   const activeStep = live.state.step;
   const islandState: IslandState = islandStateFor(live.state);
@@ -271,6 +341,11 @@ export default function App() {
   function releaseWatching() {
     watcher.current?.halt();
     watcher.current = null;
+    idle.current = null;
+    setContextMessage('');
+    setSkipOffer(null);
+    setMark(null);
+    setWatchMasks([]);
     capture.current.stop();
     if (watchVideo.current) watchVideo.current.srcObject = null;
     setFramesObserved(null);
@@ -287,16 +362,43 @@ export default function App() {
     video.srcObject = stream;
     await video.play().catch(() => {});
     const source = createFrameSource(video, () => masks);
+    setWatchMasks(masks);
     const running = new Watcher(api, source, {
       session: () => guide.current.session,
       awaitingAction: () => guide.current.awaitingAction(),
       onCounters: frames => setFramesObserved(frames),
+      // What the guide now believes it is looking at. Most ticks say nothing has
+      // changed, and the island stays exactly as it was.
+      onContext: tick => {
+        if (tick.changed) idle.current?.activity();
+        setContextMessage(tick.message);
+        // A mark is advisory: it arrives with most ticks as null, and the
+        // instruction already says where to look in words.
+        setMark(tick.mark);
+        setSkipOffer(
+          tick.action === 'offer_skip' && tick.offer
+            ? { titles: tick.offer.titles, stepIds: tick.offer.step_ids }
+            : null,
+        );
+      },
       // A middle-band verdict is worth one question and nothing more.
       onTick: tick => { if (tick.decision === 'ask') guide.current.observerAsked(); },
       onNotice: setWatchNotice,
       onStopped: reason => { releaseWatching(); setWatchNotice(reason); },
     });
     watcher.current = running;
+    // Quiet time is only meaningful while something is watching: with watching
+    // off there is no screen to be quiet, and the guide waits indefinitely by
+    // design.
+    idle.current = new IdleWatcher({
+      onStage: step => {
+        setWatchNotice(step.message);
+        if (step.stage === 'stop') {
+          idle.current?.reset();
+          void stopWatching(step.message);
+        }
+      },
+    });
     await running.start(consentVersion);
     setWatchOpen(false);
     setWatchNotice('');
@@ -377,7 +479,17 @@ export default function App() {
         setScreenshot(null); setAnalysis(null); setDraft(null); setImageUrl('');
         setGuiding(false); live.close();
       }
+      const removedTheCursor = history.some(row =>
+        row.session.task_id === item.session.task_id && row.session.id === moreHistory);
       setHistory(current => current.filter(row => row.session.task_id !== item.session.task_id));
+      // The next page is asked for by naming the session to continue after. If
+      // that session was in what just went, the list is read again from the top
+      // rather than left holding a cursor to something that no longer exists.
+      if (removedTheCursor) {
+        const first = await api.history();
+        setHistory(first.items);
+        setMoreHistory(first.next_cursor);
+      }
       setNotice(`Deleted. Receipt ${receipt.id.slice(0, 8)} — nothing of that task is left.`);
     });
   }
@@ -390,6 +502,19 @@ export default function App() {
       await supabase?.auth.signOut();
       setSignedIn(false);
       setNotice(`Your account is deleted. Receipt ${receipt.id.slice(0, 8)}.`);
+    });
+  }
+
+  async function acceptSkipForward() {
+    const step = live.state.step;
+    const current = live.session;
+    if (!step || !current || !skipOffer) return;
+    await work('Moving ahead…', async () => {
+      const result = await api.skipForward(current, step.id, skipOffer.stepIds);
+      setSession(result.session);
+      setSkipOffer(null);
+      setContextMessage('');
+      setNotice('Marked those as skipped and moved on. Nothing was recorded as checked.');
     });
   }
 
@@ -633,7 +758,20 @@ export default function App() {
         {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-row" key={item.session.id}>
           <button disabled={!!busy} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>
           <button className="icon-button history-delete" disabled={!!busy} aria-label={`Delete the task ${item.task_title}`} onClick={() => setConfirmDelete(item)}><Trash2 size={16} /></button>
-        </div>)}</div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
+        </div>)}
+          {moreHistory && <button
+            className="text-button history-more"
+            disabled={!!busy}
+            onClick={() => void work('Loading older tasks…', async () => {
+              const next = await api.history(moreHistory);
+              // Appended, never replaced: the page above stays where the reader
+              // left it, and a task deleted between two pages cannot shift the
+              // rest of the list underneath them.
+              setHistory(current => [...current, ...next.items]);
+              setMoreHistory(next.next_cursor);
+            })}
+          >{busy === 'Loading older tasks…' ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <><History size={16} /> Show older tasks</>}</button>}
+        </div> : <section className="empty-panel"><History size={34} /><h2>A fresh page.</h2><p>Your tasks will appear here once you start.</p><button className="primary" onClick={reset}>Start a task <ArrowRight size={17} /></button></section>}</div>}
         {page === 'privacy' && <div className="simple-page"><span className="eyebrow">ALWAYS YOUR CALL</span><h1>A guide. On your terms.</h1><p className="muted">You choose the context. You take the actions.</p><div className="privacy-sections"><article><EyeOff size={23} /><div><h2>Observation is off.</h2><p>Live screen guide can preview a window or tab you choose. It sends only frames you review and submit to OpenAI. Sharing stops when you leave that view or hide Guider. There is no microphone, recording, typing, or clicking.</p></div></article><article><ShieldCheck size={23} /><div><h2>{isDemo ? 'This demo stays in your tab.' : 'Screenshots are private.'}</h2><p>{isDemo ? 'Your task and image live in browser memory. They are not sent to the API or an AI provider, and they disappear when you refresh or close this tab.' : 'Images go to your configured Guider development backend, expire within 24 hours, and can be deleted with their analysis. The local development storage is not approved for real customer media.'}</p></div></article><article><ScanLine size={23} /><div><h2>OpenAI when you connect.</h2><p>Live screen guide uses your OpenAI API key for actual visual guidance. You review each outgoing frame. The original screenshot demo still uses a fixed example. Cloud keys are kept only in local backend memory and cleared on disconnect or expiry.</p></div></article><article><Trash2 size={23} /><div><h2>Delete what you share.</h2><p>Remove a screenshot with the trash button beside it. Delete a whole task from your history — that takes every session, plan, step and image under it. Deleting your account removes all of it at once and stops every signed-in device immediately.</p>
           {!isDemo && <div className="danger-zone">
             <label htmlFor="delete-phrase">Type <code>delete-my-guide-account</code> to confirm</label>
@@ -644,6 +782,9 @@ export default function App() {
         <footer><span className="footer-brand">guider.</span><span>A little help. A lot more possibility.</span><span>YOU DO. WE GUIDE.</span></footer>
       </main>
     </div>
+    {/* Both of Guider's own copies of a window live in one column, so a mirror
+        and a watched preview cannot land on top of each other. */}
+    <div className="guide-docks">
     {guiding && <section
       className={mirroring ? 'guide-mirror on' : 'guide-mirror'}
       aria-label="Your mirrored window"
@@ -658,6 +799,46 @@ export default function App() {
       <video ref={mirrorVideo} muted autoPlay playsInline aria-label="Mirrored window" />
       <p className="surface-note"><ShieldCheck size={14} /> {MIRROR_NOTE}</p>
     </section>}
+    {/* The watched window lives here for as long as watching is on: the setup
+        dialog closes, and its frames must keep arriving. While watching is off
+        it stays off-screen rather than unmounting, because a remounted element
+        loses the stream it is playing.
+
+        When watching is on it is shown, because this copy is the one surface a
+        browser may draw a mark on (ADR-020). The hidden areas are painted over
+        it too: what the user chose not to send should not be on display here
+        either. */}
+    <section
+      className={watching ? 'guide-preview' : 'sr-only'}
+      aria-label="Guider’s copy of the window it is watching"
+    >
+      {watching && <div className="guide-preview-head">
+        <span><Eye size={15} /> Guider’s copy of your window</span>
+        <button className="text-button" onClick={() => void stopWatching('Watching stopped.')}>
+          Stop watching
+        </button>
+      </div>}
+      <div className="preview-stage" ref={previewStage}>
+        <video ref={watchVideo} muted playsInline aria-hidden="true" tabIndex={-1} />
+        {watching && watchMasks.map((area, index) => <div
+          key={index}
+          className="watch-mask"
+          aria-hidden="true"
+          style={{
+            left: `calc(var(--picture-left) + var(--picture-width) * ${area.x})`,
+            top: `calc(var(--picture-top) + var(--picture-height) * ${area.y})`,
+            width: `calc(var(--picture-width) * ${area.width})`,
+            height: `calc(var(--picture-height) * ${area.height})`,
+          }}
+        />)}
+        <div className="mark-layer" ref={markLayer} aria-hidden="true" />
+      </div>
+      {watching && <p className="surface-note">
+        <ShieldCheck size={14} /> Act on your own window. A mark here points at the same place;
+        the step says where to look in words either way.
+      </p>}
+    </section>
+    </div>
     {guiding && plan && <GuideIsland
       state={islandState}
       step={activeStep}
@@ -671,6 +852,14 @@ export default function App() {
       stuck={live.state.stuck ? stuckMessage(live.state.stuck) : ''}
       blocked={live.state.blocked}
       onReportIncorrect={said => void reportIncorrect(said)}
+      contextMessage={contextMessage}
+      speaking={speaking}
+      onToggleSpeech={speaker.current ? () => setSpeaking(on => !on) : undefined}
+      skipOffer={skipOffer ? {
+        titles: skipOffer.titles,
+        accept: () => void acceptSkipForward(),
+        dismiss: () => { setSkipOffer(null); setContextMessage(''); },
+      } : null}
       onResume={() => void resumeGuide()}
       onRetry={said => void live.retry(said)}
       onReplan={() => void askForNewPlan()}
@@ -686,7 +875,7 @@ export default function App() {
       onSkip={() => void live.skip()}
       onClose={stopGuiding}
     />}
-    {confirmDelete && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    {confirmDelete && <div ref={deleteDialog} tabIndex={-1} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title">
       <div className="confirm-card">
         <h2 id="delete-title">Delete “{confirmDelete.task_title}”?</h2>
         <p>Every session, plan, step and image under this task goes with it. This cannot be undone.</p>
@@ -701,11 +890,8 @@ export default function App() {
       onStart={beginWatching}
       onCancel={() => { setWatchOpen(false); capture.current.stop(); }}
     />}
-    {/* The watched window lives here for as long as watching is on: the setup
-        dialog closes, and its frames must keep arriving. It is never shown. */}
-    <video ref={watchVideo} className="sr-only" muted playsInline aria-hidden="true" tabIndex={-1} />
     <input ref={input} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Choose screenshot file" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void selectFile(file); }} />
-    {authOpen && <div className="modal-backdrop"><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
+    {authOpen && <div className="modal-backdrop"><section ref={authDialog} tabIndex={-1} className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="icon-button modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}><X size={20} /></button><span className="brand-mark"><Compass size={26} /></span><h2 id="auth-title">Your own little workspace.</h2><p>Sign in with an email code to save private tasks.</p><form onSubmit={event => { event.preventDefault(); void work('Signing in…', async () => {
       if (codeSent) { const result = await supabase!.auth.verifyOtp({ email, token: code, type: 'email' }); if (result.error) throw result.error; setAuthOpen(false); setCode(''); setCodeSent(false); }
       else { const result = await supabase!.auth.signInWithOtp({ email }); if (result.error) throw result.error; setCodeSent(true); }
     }); }}><label>Email address<input type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required disabled={codeSent} /></label>{codeSent && <label>Email code<input value={code} inputMode="numeric" autoComplete="one-time-code" onChange={event => setCode(event.target.value)} required minLength={6} maxLength={8} /></label>}<button className="primary" disabled={!!busy}>{busy || (codeSent ? 'Verify code' : 'Email me a code')}<ArrowRight size={17} /></button></form>{error && <p className="error" role="alert">{error}</p>}<small>Your session stays in memory and ends when you close or refresh this page.</small></section></div>}

@@ -38,7 +38,7 @@ const post = <T,>(path: string, body: unknown) => request<T>(path, { method: 'PO
 const remote: GuideApi = {
   create: input => post('/tasks', input),
   importConversation: (text, source) => post('/imports/conversations', { text, source }),
-  history: () => request('/sessions'),
+  history: cursor => request(`/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
   task: id => request(`/tasks/${id}`),
   session: id => request(`/sessions/${id}`),
   upload: (task, session, file, replaces) => {
@@ -143,6 +143,23 @@ const remote: GuideApi = {
   // not fail for being pressed at a bad moment, or twice.
   stopWatching: id => request<ObservationState>(
     `/sessions/${id}/observation`, { method: 'DELETE' },
+  ),
+  // The context tick. Same frame discipline as `observe`: held in memory on both
+  // ends, never stored, and the answer is a belief rather than a verdict.
+  observeContext: (session, imageBase64, admittedAt, signal) => request(
+    `/sessions/${session.id}/context`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        expected_version: session.state_version, image_base64: imageBase64,
+        admitted_at: admittedAt,
+      }),
+      signal,
+    },
+  ),
+  skipForward: (session, stepId, stepIds) => post(
+    `/sessions/${session.id}/steps/${stepId}/skip-forward`,
+    { expected_version: session.state_version, step_ids: stepIds },
   ),
   // One tick. The frame is held in memory on both ends and never stored.
   observe: (session, imageBase64, admittedAt, signal) => request(

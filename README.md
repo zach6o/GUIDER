@@ -2,7 +2,9 @@
 
 A visual guide for computer tasks. You share the context; Guider explains; you stay in control.
 
-The development app includes a React/TypeScript workspace, an authenticated FastAPI screenshot API, and an interactive screen-guide demo with optional local window mirroring. The demo needs no API key and demonstrates floating hints, sample action detection and automatic progression. An optional OpenAI guide sends individually reviewed frames for actual guidance. This is **not a production-ready MVP**. Saved screenshot tasks use a synthetic fixture adapter.
+The development app includes a React/TypeScript workspace, an authenticated FastAPI screenshot API, and an interactive screen-guide demo with optional local window mirroring. The demo needs no API key and demonstrates floating hints, sample action detection and automatic progression. Saved tasks support configurable providers, encrypted account connections, editable plans, searchable history, exports and opt-in dictation. With no provider configured, saved tasks use an explicitly synthetic fixture. This is **not a production-ready MVP**.
+
+For what is finished and what still needs external setup, see the [completion checklist](docs/user-mode-guide/23-completion-checklist.md). The [local deployment guide](docs/user-mode-guide/24-local-deployment-and-release.md) explains the options without assuming you already have cloud accounts.
 
 ## Run with npm or pnpm
 
@@ -64,6 +66,8 @@ To connect the web app, copy `user-mode/web/.env.example` to `.env`, set the sam
 
 The API stores normalized images outside its public routes and requires an owner JWT to read them. SQLite/local storage are development defaults; PostgreSQL is the intended deployment database. Only synthetic media should be used during this development phase. `GUIDE_ENVIRONMENT=production` intentionally refuses startup until the remaining gates are satisfied.
 
+For saved-task AI, configure `GUIDE_PROVIDER_ID`, its model and key in the backend, or open **AI connections** after signing in to choose a connection for each purpose. Supported saved-task adapters are Claude, OpenRouter, Groq, DeepSeek, Ollama and LM Studio; model/role support still needs live validation. A remote account key can only be saved when `GUIDE_CREDENTIAL_ROOT` is configured. `GUIDE_MEDIA_ENCRYPTION_KEY` enables encryption for local stored images; migrate existing images with `python -m scripts.encrypt_media` before enabling it. Keep these secrets separate and backed up. Configuration errors fail explicitly instead of silently using the fixture.
+
 ## Validate
 
 ```powershell
@@ -80,6 +84,7 @@ npm.cmd test
 npm.cmd run build
 npx.cmd playwright install chromium
 npx.cmd playwright test
+npm.cmd run test:integration
 ```
 
 The screenshot fixture can be regenerated with `uv run python -m scripts.make_fixture` from the backend directory. Dependency versions are pinned in `uv.lock` and `package-lock.json`. Generated contracts cover implemented endpoints only.
@@ -91,7 +96,8 @@ The screenshot fixture can be regenerated with `uv run python -m scripts.make_fi
 - `user-mode/backend`: Supabase JWT verification, async database models, migrations, private storage, operation worker, media expiry and tests.
 - `user-mode/backend/app/cloud.py`: ephemeral loopback-only personal OpenAI connector.
 - `user-mode/contracts`: checked-in OpenAPI 3.1 and component schemas.
-- `user-mode/client/windows`: independent WPF shell scaffold; no observation or desktop control.
+- `user-mode/client/windows`: independently buildable WPF shell and synthetic PKCE primitives; native capture, real authentication and signed packaging remain open.
+- `user-mode/deploy`: loopback-only Docker Compose preview with PostgreSQL and encrypted media volume.
 - [Implementation status](docs/user-mode-guide/19-implementation-status.md): implemented scope, evidence and remaining phase gates.
 - [Product specification](docs/user-mode-guide/README.md): normative MVP requirements, contracts and implementation order.
 

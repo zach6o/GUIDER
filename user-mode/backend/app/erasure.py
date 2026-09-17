@@ -276,6 +276,8 @@ async def erase_account(db: AsyncSession, storage, user: m.User, request_id: str
         if column is not None:
             await db.execute(delete(model).where(column == user.id))
     await db.execute(delete(m.IdempotencyRecord).where(m.IdempotencyRecord.owner_id == user.id))
+    await db.execute(delete(m.ProviderBinding).where(m.ProviderBinding.owner_id == user.id))
+    await db.execute(delete(m.ProviderUsage).where(m.ProviderUsage.owner_id == user.id))
 
     user.status = "deleting"
     user.deletion_requested_at = m.now()

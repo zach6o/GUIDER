@@ -5,6 +5,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Settings
+from app.models import ProviderUsage
 
 
 def make_database(settings: Settings):
@@ -20,5 +21,14 @@ def make_database(settings: Settings):
 
 async def database(request: Request) -> AsyncIterator[AsyncSession]:
     async with request.app.state.sessions() as session:
-        async with session.begin():
-            yield session
+        try:
+            async with session.begin():
+                yield session
+        except Exception:
+            # A rejected/failed answer can still be a billed provider call.
+            # Preserve content-free accounting after rolling back task changes.
+            attempts = session.info.pop("provider_attempts", [])
+            if attempts:
+                async with request.app.state.sessions() as accounting, accounting.begin():
+                    accounting.add_all(ProviderUsage(**attempt) for attempt in attempts)
+            raise

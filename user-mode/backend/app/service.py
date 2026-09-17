@@ -205,17 +205,25 @@ async def purge_image(
         ):
             record.status = "tombstoned"
             record.response_ref = {}
-    if image.object_key:
-        await storage.delete(image.object_key)
-    image.object_key = None
-    image.content_hash = None
-    image.status = "deleted"
-    image.deleted_at = m.now()
     receipt = existing or m.DeletionJob(
         owner_id=image.owner_id,
         resource_id=image.id,
         online_purge_due_at=m.now() + timedelta(hours=24),
     )
+    receipt.status = "purging"
+    db.add(receipt)
+    if image.object_key:
+        try:
+            await storage.delete(image.object_key)
+        except (OSError, GuideError):
+            # Keep the key for a later retry, while denying reads immediately.
+            # Returning a pending receipt commits the request even if storage is down.
+            await db.flush()
+            return receipt
+    image.object_key = None
+    image.content_hash = None
+    image.status = "deleted"
+    image.deleted_at = m.now()
     receipt.status = "purged"
     receipt.completed_at = m.now()
     db.add(receipt)

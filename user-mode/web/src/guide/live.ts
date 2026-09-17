@@ -250,11 +250,17 @@ export function useLiveGuide(api: GuideApi, session: Session | null): LiveGuide 
   }, [fail]);
 
   const start = useCallback(() => act(async () => {
-    const session = current.current;
-    if (!session) return;
+    const held = current.current;
+    if (!held) return;
+    const session = await api.session(held.id);
     dispatch({ type: 'start' });
-    const started = await api.start(session);
-    current.current = started.session;
+    if (session.state === 'paused' || session.state === 'blocked') {
+      current.current = (await api.resume(session, 'screenshot_only')).session;
+    } else if (['awaiting_user_action', 'processing', 'verifying', 'instruction_ready', 'active'].includes(session.state)) {
+      current.current = session;
+    } else {
+      current.current = (await api.start(session)).session;
+    }
     // The first instruction is published by a worker, so it arrives on the event
     // stream rather than in this response.
     follow(session.id);

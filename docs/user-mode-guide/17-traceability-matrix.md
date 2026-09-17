@@ -39,6 +39,17 @@ Status: proposed implementation baseline. This matrix is authoritative for requi
 
 ## Cross-cutting coverage checks
 
+The 2026-09-17 completion pass adds implementation evidence without closing
+release gates: R04/R05 plan review/editing maps to `PlanEditor.tsx`, the revisions
+route and `test_plan_editing.py`; R15 authentication recovery maps to
+`integration/account.spec.ts`; R16 media normalization, encrypted storage and
+deletion retry map to `test_local_storage.py` and `test_completion_hardening.py`;
+R18/R19 provider selection/settings map to `test_provider_selection.py` and
+`test_provider_settings.py`. History/export/dictation UI flows are exercised by
+`e2e/completion.spec.ts`. Native PKCE primitives have nine synthetic checks in
+`client/windows-tests`; they are not native identity or capture certification.
+Current verification and remaining production/native scope are in [23](23-completion-checklist.md).
+
 All 30 R IDs have F/API-or-entity/UX/SEC/T/phase mappings. T31–T40 supplement row-specific tests for grounding, timing, crashes, deletion, devices, event streaming, performance, usability and full release flow. T41–T48 cover the Guide Engine v2 mechanisms — tiered admission, the observation route and its budgets, continuous-observation consent and stop, the server-driven guide and its self-report arm, stuck detection and replan, the provider role abstraction, conversation import and completion honesty. A01–A13 are the required acceptance scenarios. Internal roles map through R18/R19/R20/R26, and every taxonomy row inherits one verifier/failure profile in 10 plus SEC-06/07/08. Each ADR states related R IDs and revisit conditions.
 
 No test status is marked passed for an unimplemented product. Before each phase closes, replace planning-only references in a separate implementation status report with code paths and actual test-run artifacts. Keep these requirement IDs stable; adding a requirement adds an ID and all matrix columns. Removing or changing a requirement requires an ADR and migration/compatibility assessment where applicable.

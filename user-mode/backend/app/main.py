@@ -19,6 +19,8 @@ from app.errors import GuideError
 from app.guide.observation import SessionGate
 from app.media import LocalPrivateStorage
 from app.providers.registry import default_registry
+from app.providers.settings import router as provider_router
+from app.storage import EncryptedPrivateStorage
 from app.worker import run_worker
 
 
@@ -48,7 +50,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.engine = engine
     app.state.sessions = sessions
     app.state.verifier = SupabaseVerifier(settings.supabase_url)
-    app.state.storage = LocalPrivateStorage(settings.storage_path)
+    app.state.storage = (
+        EncryptedPrivateStorage(
+            settings.storage_path, settings.media_encryption_key.get_secret_value()
+        )
+        if settings.media_encryption_key
+        else LocalPrivateStorage(settings.storage_path)
+    )
     # Built from this app's own settings, so a configured provider is registered
     # for this process only. Selection stays by role and capability.
     registry = default_registry(settings)
@@ -63,7 +71,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Confirm-Deletion"],
         expose_headers=["X-Request-ID", "Retry-After"],
     )
 
@@ -72,7 +80,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         request.state.request_id = str(uuid4())
         content_type = request.headers.get("content-type", "")
         limit = 11 * 1024 * 1024 if content_type.startswith("multipart/form-data") else 65536
-        if request.url.path == "/api/v1/local-guide/checks":
+        if request.url.path == "/api/v1/local-guide/checks" or (
+            request.url.path.startswith("/api/v1/guide/sessions/")
+            and request.url.path.endswith(("/observe", "/context"))
+        ):
             limit = 6 * 1024 * 1024
         chunks = []
         size = 0
@@ -105,7 +116,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         return response
 
     def failure(request: Request, error: GuideError) -> JSONResponse:
-        headers = {"Retry-After": "60"} if error.status == 429 else {}
+        headers = {
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "X-Frame-Options": "DENY",
+            "Content-Security-Policy": (
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            ),
+            "X-Request-ID": getattr(request.state, "request_id", str(uuid4())),
+        }
+        if error.status == 429:
+            headers["Retry-After"] = "60"
         if error.status == 401:
             headers["WWW-Authenticate"] = "Bearer"
         return JSONResponse(
@@ -141,6 +163,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         )
 
     app.include_router(router)
+    app.include_router(provider_router)
     app.include_router(cloud_router)
     return app
 

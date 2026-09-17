@@ -30,7 +30,7 @@ from app.guide.observation import (
     enable,
 )
 from app.guide.observation import stop as stop_watching
-from app.guide.planner import steps_for
+from app.guide.planner import persist, steps_for
 from app.guide.recovery import (
     check_retryable,
     current_open_step,
@@ -49,8 +49,14 @@ from app.guide.steps import (
 )
 from app.guide.summary import require_ending, write_summary
 from app.imports.redact import MAX_TRANSCRIPT, redact
-from app.media import MAX_BYTES, normalize, prepare_frame
-from app.providers.base import ContextRequest, ObserveContext  # noqa: F401
+from app.media import MAX_BYTES, decode, prepare_frame
+from app.providers.base import (  # noqa: F401
+    ContextRequest,
+    ObserveContext,
+    ProposedPlan,
+    ProposedStep,
+)
+from app.providers.settings import for_owner
 from app.service import (
     cancel_pending,
     check_version,
@@ -66,10 +72,13 @@ from app.service import (
     usable,
 )
 
-router = APIRouter(prefix="/api/v1/guide", responses={
-    status: {"model": s.ErrorEnvelope}
-    for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 503)
-})
+router = APIRouter(
+    prefix="/api/v1/guide",
+    responses={
+        status: {"model": s.ErrorEnvelope}
+        for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 503)
+    },
+)
 Key = Annotated[UUID, Header(alias="Idempotency-Key")]
 
 
@@ -112,9 +121,7 @@ async def create_task(body: s.TaskCreate, request: Request, db: Db, owner: Owner
     return envelope(request, result)
 
 
-@router.post(
-    "/imports/conversations", status_code=202, response_model=s.Envelope[s.ImportAccepted]
-)
+@router.post("/imports/conversations", status_code=202, response_model=s.Envelope[s.ImportAccepted])
 async def import_conversation(
     body: s.ImportRequest,
     request: Request,
@@ -370,6 +377,88 @@ async def get_plan(plan_id: UUID, request: Request, db: Db, owner: Owner):
     return envelope(request, await plan_view(db, plan))
 
 
+@router.get("/sessions/{session_id}/plan", response_model=s.Envelope[s.Plan | None])
+async def session_plan(session_id: UUID, request: Request, db: Db, owner: Owner):
+    session = await owned(db, m.GuideSession, str(session_id), owner.id)
+    plan = await db.scalar(
+        select(m.TaskPlan)
+        .where(
+            m.TaskPlan.owner_id == owner.id,
+            m.TaskPlan.session_id == session.id,
+            m.TaskPlan.status != "superseded",
+        )
+        .order_by(m.TaskPlan.version.desc())
+        .limit(1)
+    )
+    return envelope(request, await plan_view(db, plan) if plan else None)
+
+
+@router.post("/plans/{plan_id}/revisions", response_model=s.Envelope[s.ConfirmedPlan])
+async def revise_plan(
+    plan_id: UUID,
+    body: s.PlanEdit,
+    request: Request,
+    db: Db,
+    owner: Owner,
+    key: Key,
+):
+    plan = await owned(db, m.TaskPlan, str(plan_id), owner.id)
+    session = await owned(db, m.GuideSession, plan.session_id, owner.id)
+    request_digest = digest(body.model_dump(mode="json"))
+    previous = await replay(db, request, owner.id, str(key), request_digest)
+    if previous:
+        return envelope(request, previous)
+    check_version(session, body.expected_version)
+    if plan.status == "superseded" or plan.version != body.plan_version:
+        raise GuideError(409, "stale_version", "Review the latest plan before editing.")
+    if session.state != "awaiting_user_confirmation":
+        raise GuideError(409, "invalid_transition", "Edit the plan before starting its steps.")
+    steps = {row.id: row for row in await steps_for(db, plan)}
+    identifiers = [str(row.id) for row in body.steps]
+    if len(set(identifiers)) != len(identifiers) or set(identifiers) != set(steps):
+        raise GuideError(422, "validation_failed", "Include each current step exactly once.")
+    if any(row.status != "pending" for row in steps.values()):
+        raise GuideError(
+            409, "invalid_transition", "Completed work is preserved; request a replan."
+        )
+    proposal = ProposedPlan(
+        assumptions=plan.assumptions,
+        steps=[
+            ProposedStep(
+                **edit.model_dump(exclude={"id"}),
+                fallback=steps[str(edit.id)].fallback,
+                explanation=steps[str(edit.id)].explanation,
+                application_key=steps[str(edit.id)].application_key,
+                risk=steps[str(edit.id)].risk,
+                evidence_kind=steps[str(edit.id)].evidence_kind,
+                required=steps[str(edit.id)].required,
+            )
+            for edit in body.steps
+        ],
+    )
+    task = await owned(db, m.GuideTask, plan.task_id, owner.id)
+    replacement = await persist(db, session, task, proposal)
+    session.confirmed_plan_version = None
+    session.current_step_id = None
+    session.last_user_activity_at = m.now()
+    await transition(db, session, session.state, "plan_edited", request.state.request_id)
+    await record_event(
+        db,
+        session,
+        "plan.confirmation_required",
+        request.state.request_id,
+        {
+            "plan_id": replacement.id,
+            "version": replacement.version,
+        },
+    )
+    result = s.ConfirmedPlan(
+        plan=await plan_view(db, replacement), session=s.Session.model_validate(session)
+    )
+    await remember(db, request, owner.id, str(key), request_digest, result, 200)
+    return envelope(request, result)
+
+
 @router.post("/plans/{plan_id}/confirm", response_model=s.Envelope[s.ConfirmedPlan])
 async def confirm_plan(
     plan_id: UUID,
@@ -404,9 +493,7 @@ async def confirm_plan(
     session.confirmed_plan_version = plan.version
     session.last_user_activity_at = m.now()
     # Same-state command: version still advances, no session.state_changed event.
-    await transition(
-        db, session, session.state, "plan_confirmed", request.state.request_id
-    )
+    await transition(db, session, session.state, "plan_confirmed", request.state.request_id)
     await record_event(
         db,
         session,
@@ -596,9 +683,7 @@ async def verify_step(
         # The objective arm. A caller that sent evidence asked for a check, and
         # now gets one: the observer looks at the still and the bands decide.
         response.status_code = 202
-        return await check_evidence(
-            session, step, body, request, db, owner, key, request_digest
-        )
+        return await check_evidence(session, step, body, request, db, owner, key, request_digest)
     if not body.self_report.strip():
         raise GuideError(
             422, "evidence_required", "Say what happened, or share a screenshot to check."
@@ -683,9 +768,7 @@ async def feedback(
     if body.kind == "incorrect_guidance" and step is None:
         # Blocking a session and withdrawing a pointer needs to name what was
         # wrong; without a step there is nothing to withdraw and nothing to learn.
-        raise GuideError(
-            422, "validation_failed", "Say which step the guidance was wrong about."
-        )
+        raise GuideError(422, "validation_failed", "Say which step the guidance was wrong about.")
     if body.kind == "incorrect_guidance":
         await cancel_pending(db, session)
     recorded = await record_feedback(
@@ -726,9 +809,7 @@ async def check_evidence(
     exactly what Operations are for.
     """
     if len(body.evidence_ids) != 1:
-        raise GuideError(
-            422, "validation_failed", "Share one screenshot of the result to check."
-        )
+        raise GuideError(422, "validation_failed", "Share one screenshot of the result to check.")
     image = await owned(db, m.ScreenshotRow, str(body.evidence_ids[0]), owner.id)
     usable(image)
     if image.task_id != session.task_id:
@@ -976,9 +1057,7 @@ async def export_session(session_id: UUID, request: Request, db: Db, owner: Owne
                 status=row.status,
                 settled_by=settled,
                 verified_at=row.verified_at,
-                confidence=(
-                    passes[row.id].observed_confidence if row.id in passes else None
-                ),
+                confidence=(passes[row.id].observed_confidence if row.id in passes else None),
             )
         )
 
@@ -1123,7 +1202,7 @@ async def observe(
         pixels = await asyncio.to_thread(prepare_frame, body.image_base64)
         result = vet_observation(
             await asyncio.wait_for(
-                request.app.state.observer.observe(
+                (await for_owner(request.app, db, owner.id, "observe")).observe(
                     ObserveContext(
                         success_criterion=step.success_criterion,
                         expected_result=step.expected_result,
@@ -1277,9 +1356,7 @@ async def observe_context(
 
     async with gate.lock(session.id):
         pixels = await asyncio.to_thread(prepare_frame, body.image_base64)
-        observer = (
-            getattr(request.app.state, "context_observer", None) or request.app.state.observer
-        )
+        observer = await for_owner(request.app, db, owner.id, "observe_context")
         # The adapter proposes; the guard vets it. Screen text is data, and a
         # control whose label reads as an instruction never becomes one.
         context = vet_context(
@@ -1293,15 +1370,11 @@ async def observe_context(
             raise GuideError(409, "observation_stopped", "Watching was switched off.")
         session.observation_calls += 1
         session.frames_observed += 1
-        row, changed = await save_context(
-            db, session, step, context, request.state.request_id
-        )
+        row, changed = await save_context(db, session, step, context, request.state.request_id)
         # What the belief means for the guide. Nothing here writes session state:
         # the decision is recorded, counted when it means trouble, and returned.
         decision = decide(context, step, later)
-        await apply_decision(
-            db, session, step, instruction, decision, request.state.request_id
-        )
+        await apply_decision(db, session, step, instruction, decision, request.state.request_id)
 
     return envelope(
         request,
@@ -1325,12 +1398,15 @@ async def observe_context(
             message=decision.message,
             mark=(
                 s.Mark(kind=found.kind, box=found.box, label=found.label)
-                if (found := mark_for(instruction, context)) else None
+                if (found := mark_for(instruction, context))
+                else None
             ),
             offer=s.SkipOffer(
                 step_ids=[UUID(value) for value in decision.skippable],
                 titles=[row.title for row in later if row.id in set(decision.skippable)],
-            ) if decision.skippable else None,
+            )
+            if decision.skippable
+            else None,
         ),
     )
 
@@ -1420,7 +1496,7 @@ async def upload(
     )
     if retained >= 20 and replacement is None:
         raise GuideError(429, "rate_limited", "Delete an image before uploading another.")
-    normalized = await asyncio.to_thread(normalize, raw)
+    normalized = await asyncio.to_thread(decode, raw)
     storage = request.app.state.storage
     object_key = await storage.put(normalized.pixels)
     image = m.ScreenshotRow(
@@ -1792,9 +1868,7 @@ async def retry_step(
     session.last_user_activity_at = m.now()
     await transition(db, session, "processing", "retry_requested", request.state.request_id)
     operation = await queue_instruction(db, session, request.state.request_id)
-    result = s.Pending(
-        operation_id=operation.id, session=s.Session.model_validate(session)
-    )
+    result = s.Pending(operation_id=operation.id, session=s.Session.model_validate(session))
     await remember(db, request, owner.id, str(key), request_digest, result, 202)
     return envelope(request, result)
 

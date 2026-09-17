@@ -1,5 +1,45 @@
 # 19 · Implementation status and session handoff
 
+## Completion pass: 2026-09-17
+
+The current remaining-work authority is [23](23-completion-checklist.md), with
+setup and release evidence in [24](24-local-deployment-and-release.md). Sections
+below are historical implementation notes; their older lists of missing UI and
+engine features are not current release checklists.
+
+Saved-task provider selection now reaches analysis and screen context as well as
+planning, instruction, observation and import. Per-role account settings encrypt
+keys and report call usage, and connection changes revoke watching. Invalid
+configuration cannot silently select the fixture.
+
+Plan editing/reordering creates a fresh draft for confirmation. History exposes
+search, filters and JSON export; saved-task links recover after sign-in. Optional
+dictation requires consent and transcript review. Auth loss clears private UI,
+capture, mirroring and speech, including when a stop request fails.
+
+Local media encryption and migration/rotation, bounded subprocess decoding, ICC
+conversion, retention cleanup and pending image-deletion retries are implemented.
+A loopback-only Compose preview adds PostgreSQL and private encrypted volumes.
+Production infrastructure and native capture are still incomplete: see the
+explicit open requirements in [23](23-completion-checklist.md).
+
+CI now includes browser scenarios, signed synthetic identity/API integration,
+PostgreSQL migration parity, a synthetic load check and Windows builds/PKCE
+checks. Provider smoke checks cover all six saved-task roles and can write JSON
+evidence. No real provider credential or Supabase account was exercised.
+
+Verification: 527 backend tests pass on PostgreSQL with no skips, including the
+12 concurrency tests previously skipped locally. The final settings disclosure
+change has eight passing targeted backend tests. Web: 175 unit tests, 66 browser
+scenarios and five authenticated browser/API scenarios pass. Ten additional
+accessibility/completion scenarios pass against the built container UI. Web
+typecheck/build, backend lint, generated contracts and SQLite/PostgreSQL migration
+parity pass. Both container images build and the local stack starts successfully.
+The Windows shell builds with .NET 10.0.401 (zero warnings/errors), and nine
+synthetic PKCE checks pass. Local synthetic load: 200 requests, concurrency eight,
+zero failures, p95 437.56 ms. These results do not certify live providers, real
+Supabase delivery, production infrastructure or a complete native client.
+
 ## One palette, two themes: 2026-09-15
 
 The frontend audit asked for dark mode and the answer was no, because the

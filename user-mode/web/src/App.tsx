@@ -5,6 +5,10 @@ import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, Ci
   Trash2, X, Zap } from 'lucide-react';
 import { api, isDemo, supabase } from './api';
 import { ImageEditor } from './ImageEditor';
+import { ProviderSettings } from './ProviderSettings';
+import { PlanEditor } from './PlanEditor';
+import { HistoryFilters } from './HistoryFilters';
+import { VoiceInput } from './VoiceInput';
 // The live screen guide pulls in the practice demo, the capture stack and the
 // frame encoder — a third of the bundle for a page most visits never open. It
 // loads when someone actually asks for it.
@@ -27,7 +31,7 @@ import { WatchSetup } from './overlay/WatchSetup';
 import { ScreenCapture } from './screenCapture';
 import type {
   Analysis, Category, ImportedConversation, ImportSource, Plan, Screenshot, SeenMark, Session,
-  Summary, Task,
+  Summary, Task, HistoryFilters as Filters,
 } from './types';
 
 const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
@@ -35,14 +39,18 @@ const categories: { id: Category; label: string; icon: typeof Code2 }[] = [
   { id: 'debug', label: 'Fix a problem', icon: Code2 }, { id: 'understand', label: 'Understand something', icon: CircleHelp },
   { id: 'test', label: 'Test my work', icon: CheckCircle2 }, { id: 'git_github', label: 'Git & GitHub', icon: GitBranch },
 ];
-type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live' | 'summary';
+type Page = 'home' | 'task' | 'plan' | 'history' | 'privacy' | 'live' | 'summary' | 'providers';
 const SOURCE_LABELS: Record<ImportSource, string> = {
   chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', other: 'another assistant',
 };
 type HistoryItem = { session: Session; task_title: string };
 
 export default function App() {
-  const [page, setPage] = useState<Page>(() => location.hash === '#live' ? 'live' : 'home');
+  const [page, setPage] = useState<Page>(() => {
+    const value = location.hash.slice(1);
+    return ['live', 'history', 'privacy', 'providers'].includes(value) ? value as Page : 'home';
+  });
+  const linkedSession = useRef(location.hash.match(/^#session\/([a-f0-9-]{36})$/i)?.[1] ?? null);
   const [sharing, setSharing] = useState(false);
   const [goal, setGoal] = useState('');
   const [category, setCategory] = useState<Category>('debug');
@@ -69,6 +77,7 @@ export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [floating, setFloating] = useState<FloatingWindow | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyFilters, setHistoryFilters] = useState<Filters>({});
   // The session the next page continues after, or null when the list is whole.
   const [moreHistory, setMoreHistory] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
@@ -112,18 +121,64 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase) return;
-    const { data } = supabase.auth.onAuthStateChange((_event, current) => setSignedIn(Boolean(current)));
+    const { data } = supabase.auth.onAuthStateChange((event, current) => {
+      setSignedIn(Boolean(current));
+      if (event === 'SIGNED_OUT') {
+        watcher.current?.halt(); watcher.current = null;
+        idle.current?.reset(); idle.current = null;
+        capture.current.stop(); mirror.current.stop(); speaker.current?.cancel();
+        setFloating(null); setGuiding(false); setSharing(false); setMirroring(false);
+        setWatchOpen(false); setFramesObserved(null); setMark(null); setWatchMasks([]);
+        setHistory([]); setMoreHistory(null); setSummary(null); setProvenance(null);
+        setTranscript(''); setPasteOpen(false); setConfirmDelete(null); setDeletePhrase('');
+        linkedSession.current = null;
+        reset();
+      }
+    });
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
   useEffect(() => {
     if (!signedIn) return;
-    void api.history().then(page => {
+    let active = true;
+    void api.history(undefined, historyFilters).then(page => {
+      if (!active) return;
       setHistory(page.items);
       setMoreHistory(page.next_cursor);
-    }).catch(() => {});
-  }, [signedIn, page, task]);
+    }).catch(error => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [signedIn, page, task, historyFilters]);
   useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => {
+    const id = linkedSession.current;
+    if (!id || !signedIn) return;
+    let active = true;
+    void (async () => {
+      try {
+        const current = await api.session(id);
+        const [saved, roadmap, ending] = await Promise.all([
+          api.task(current.task_id), api.sessionPlan(id), api.summary(id),
+        ]);
+        if (!active) return;
+        linkedSession.current = null;
+        setTask(saved); setSession(current); setPlan(roadmap); setSummary(ending);
+        setPage(ending ? 'summary' : roadmap ? 'plan' : 'task');
+        setNotice('Your saved task is open. Review it before continuing; screen sharing is off.');
+      } catch (error) {
+        if (!active) return;
+        linkedSession.current = null;
+        setError(isDemo ? 'This demo task cleared when the page refreshed. Start a new example.'
+          : error instanceof Error ? error.message : 'Could not reopen the task.');
+      }
+    })();
+    return () => { active = false; };
+  }, [signedIn]);
+  useEffect(() => {
+    if (linkedSession.current) return;
+    const hash = session && ['task', 'plan', 'summary'].includes(page)
+      ? `#session/${session.id}` : page === 'home' ? '' : `#${page}`;
+    window.history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
+  }, [page, session?.id]);
   useEffect(() => () => { closeFloatingWindow(floating); }, [floating]);
   useEffect(() => () => { mirror.current.stop(); }, []);
   useEffect(() => () => { speaker.current?.cancel(); }, []);
@@ -147,6 +202,7 @@ export default function App() {
 
   function navigate(next: Page) {
     if (busy) return;
+    linkedSession.current = null;
     generation.current++; setPage(next); setError(''); setNotice('');
     window.history.replaceState(null, '', next === 'live' ? '#live' : location.pathname);
   }
@@ -486,7 +542,7 @@ export default function App() {
       // that session was in what just went, the list is read again from the top
       // rather than left holding a cursor to something that no longer exists.
       if (removedTheCursor) {
-        const first = await api.history();
+        const first = await api.history(undefined, historyFilters);
         setHistory(first.items);
         setMoreHistory(first.next_cursor);
       }
@@ -608,6 +664,9 @@ export default function App() {
     await work('Opening task…', async () => {
       const [saved, current] = await Promise.all([api.task(item.session.task_id), api.session(item.session.id)]);
       setTask(saved); setSession(current); setPage('task'); setDraft(null); setScreenshot(null); setAnalysis(null); setImageUrl('');
+      const roadmap = await api.sessionPlan(current.id);
+      setPlan(roadmap);
+      if (roadmap) setPage('plan');
     });
   }
   const terminal = session && ['completed', 'failed', 'expired'].includes(session.state);
@@ -617,6 +676,7 @@ export default function App() {
       <button className="brand" onClick={() => navigate('home')} disabled={!!busy} aria-label="Guider home"><span className="brand-mark"><Compass size={24} strokeWidth={1.8} /></span>guider<span className="brand-dot">.</span></button>
       <span className="workspace-label">YOUR EVERYDAY GUIDE</span>
       <nav aria-label="Main navigation">
+        <button className={page === 'providers' ? 'nav-item selected' : 'nav-item'} disabled={!!busy} onClick={() => navigate('providers')}><Zap size={19} /> AI connections</button>
         <button className={page === 'live' ? 'nav-item selected' : 'nav-item'} disabled={!!busy} onClick={() => navigate('live')}><ScanLine size={19} /> Live screen guide</button>
         <button className={page === 'home' || page === 'task' ? 'nav-item selected' : 'nav-item'} disabled={!!busy} onClick={() => navigate(task ? 'task' : 'home')}><Compass size={19} /> My workspace <span className="nav-dot" /></button>
         <button className={page === 'history' ? 'nav-item selected' : 'nav-item'} disabled={!!busy} onClick={() => navigate('history')}><History size={19} /> Task history</button>
@@ -625,16 +685,20 @@ export default function App() {
       <div className="sidebar-note"><div className="little-orbit"><Compass size={28} /></div><h3>You’re in the driver’s seat.</h3><p>Guider explains. You make the moves.</p><span><EyeOff size={14} /> {sharing ? 'Window sharing on' : 'Screen observation off'}</span></div>
       <div className="profile"><div className="avatar">{isDemo ? 'D' : 'Y'}</div><div><strong>{isDemo ? 'Demo workspace' : signedIn ? 'Your workspace' : 'Welcome to Guider'}</strong><small>{isDemo ? 'Just exploring' : signedIn ? 'Signed in privately' : 'Sign in to save tasks'}</small></div>
         {!isDemo && <button className="icon-button" aria-label={signedIn ? 'Sign out' : 'Sign in'} onClick={() => {
-          if (signedIn) void work('Signing out…', async () => { if (session && !terminal) await api.stop(session.id); await supabase!.auth.signOut(); reset(); setHistory([]); });
+          if (signedIn) void work('Signing out…', async () => {
+            try { if (session && !terminal) await api.stop(session.id); }
+            finally { await supabase!.auth.signOut({ scope: 'local' }); }
+          });
           else setAuthOpen(true);
         }}><LogOut size={17} /></button>}
       </div>
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><span className="breadcrumb">Workspace <ChevronRight size={14} /><strong>{page === 'live' ? 'Live screen guide' : page === 'home' ? 'A fresh start' : page === 'task' ? 'Screenshot help' : page === 'plan' ? 'Your plan' : page === 'history' ? 'Task history' : 'Privacy & control'}</strong></span>
+      <header className="topbar"><span className="breadcrumb">Workspace <ChevronRight size={14} /><strong>{page === 'live' ? 'Live screen guide' : page === 'home' ? 'A fresh start' : page === 'task' ? 'Screenshot help' : page === 'plan' ? 'Your plan' : page === 'history' ? 'Task history' : page === 'providers' ? 'AI connections' : 'Privacy & control'}</strong></span>
         <span className="mode-label"><span />{page === 'live' ? (sharing ? 'Window sharing on' : 'Screen guide') : isDemo ? 'Local demo' : 'Screenshot mode'}</span></header>
       <main>
+        {page === 'providers' && <ProviderSettings signedIn={signedIn} />}
         {isDemo && page !== 'live' && <div className="demo-banner"><span><span className="tiny-tag">PREVIEW</span> A place to try Guider. Everything stays in this tab and clears on refresh.</span><button onClick={() => navigate('privacy')} disabled={!!busy}>How it works <ArrowRight size={14} /></button></div>}
         {error && <div className="message error" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>}
         {notice && <div className="message notice" role="status"><Check size={17} />{notice}</div>}
@@ -651,6 +715,7 @@ export default function App() {
             <div className="composer-bottom"><button className={draft ? 'attach-button attached' : 'attach-button'} onClick={() => input.current?.click()} disabled={!!busy}><ImagePlus size={18} />{draft ? 'Screenshot attached' : 'Add a screenshot'}{draft && <Check size={14} />}</button><button className="primary" disabled={!!busy} onClick={() => void createTask()}>{busy ? <LoaderCircle className="spin" size={17} /> : <>Let’s figure it out <ArrowRight size={18} /></>}</button></div>
           </section>
           <div className="composer-caption"><ShieldCheck size={14} /> You choose what to share. Guider never controls your computer.</div>
+          <VoiceInput onUse={setGoal} disabled={!!busy || sharing || guiding} />
           <section className="import-card" aria-label="Continue from a conversation">
             {!pasteOpen
               ? <div className="import-intro"><span className="brand-mark"><ClipboardPaste size={22} /></span>
@@ -725,6 +790,15 @@ export default function App() {
             {surface === 'mirror' && <p className="surface-note"><ShieldCheck size={14} /> {MIRROR_NOTE}</p>}
           </section>}
           <section className="plan-actions">
+            {session?.state === 'awaiting_user_confirmation' && plan.steps.every(step => step.status === 'pending') && <PlanEditor key={plan.id} plan={plan} disabled={!!busy || guiding} onSave={async steps => {
+              setBusy('Saving your plan…'); setError('');
+              try {
+                const result = await api.revisePlan(plan, session, steps);
+                setPlan(result.plan); setSession(result.session);
+                setNotice('Your revised plan needs confirmation before you start.');
+              } catch (error) { setError(error instanceof Error ? error.message : 'Could not save the plan.'); throw error; }
+              finally { setBusy(''); }
+            }} />}
             {plan.status === 'confirmed'
               ? <><CheckCircle2 size={22} /><div><strong>This plan is confirmed.</strong><small>Version {plan.version} is the one Guider will follow.</small></div><div className="plan-buttons"><button className="primary" disabled={!!busy || guiding} onClick={() => void startGuiding()}>{guiding ? 'Guide running' : 'Start the steps'} <ArrowRight size={16} /></button></div></>
               : <><div><strong>Happy with these steps?</strong><small>Confirming records the version. You can ask for a different plan instead.</small></div><div className="plan-buttons"><button className="text-button" disabled={!!busy} onClick={() => void buildPlan()}>Suggest a different plan</button><button className="primary" disabled={!!busy} onClick={() => void confirmPlan()}>{busy ? <><LoaderCircle size={16} className="spin" /> {busy}</> : <>Confirm this plan <Check size={17} /></>}</button></div></>}
@@ -755,15 +829,21 @@ export default function App() {
           <div className="plan-buttons"><button className="text-button" onClick={() => navigate('history')}>See your tasks</button><button className="primary" onClick={reset}>Start something new <ArrowRight size={17} /></button></div>
         </div>}
 
-        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-row" key={item.session.id}>
+        {page === 'history' && <div className="simple-page"><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h1>Your task history.</h1><p className="muted">{isDemo ? 'Tasks from this browser tab. Refreshing clears the demo.' : 'Your private tasks, newest first. Reopen a task to share fresh evidence.'}</p><HistoryFilters onChange={setHistoryFilters} disabled={!!busy} />{history.length ? <div className="history-list">{history.map(item => <div className="history-row" key={item.session.id}>
           <button disabled={!!busy} onClick={() => void (item.session.state === 'completed' ? openSummary(item) : openTask(item))}><span className="history-icon"><Terminal size={21} /></span><span><strong>{item.task_title}</strong><small>{new Date(item.session.created_at).toLocaleDateString()} · {item.session.outcome || item.session.state.replaceAll('_', ' ')}</small></span><ArrowRight size={19} /></button>
           <button className="icon-button history-delete" disabled={!!busy} aria-label={`Delete the task ${item.task_title}`} onClick={() => setConfirmDelete(item)}><Trash2 size={16} /></button>
+          <button className="text-button" disabled={!!busy} aria-label={`Export the task ${item.task_title}`} onClick={() => void work('Exporting task…', async () => {
+            const record = await api.exportSession(item.session.id);
+            const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }));
+            const link = document.createElement('a'); link.href = url; link.download = `guider-${item.session.id}.json`;
+            link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+          })}>Export</button>
         </div>)}
           {moreHistory && <button
             className="text-button history-more"
             disabled={!!busy}
             onClick={() => void work('Loading older tasks…', async () => {
-              const next = await api.history(moreHistory);
+              const next = await api.history(moreHistory, historyFilters);
               // Appended, never replaced: the page above stays where the reader
               // left it, and a task deleted between two pages cannot shift the
               // rest of the list underneath them.

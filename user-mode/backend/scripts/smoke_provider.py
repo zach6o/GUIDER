@@ -33,15 +33,25 @@ manual `provider-smoke` workflow, with a key held as a repository secret.
 import argparse
 import asyncio
 import io
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from uuid import uuid4
 
 from PIL import Image, ImageDraw
 
 from app.config import Settings
 from app.errors import GuideError
+from app.guide.context import vet_context
 from app.guide.guard import step_policy, vet_instruction, vet_observation
-from app.providers.base import ImportContext, InstructionContext, ObserveContext, PlanContext
+from app.providers.base import (
+    ContextRequest,
+    ImportContext,
+    InstructionContext,
+    ObserveContext,
+    PlanContext,
+)
 from app.providers.registry import default_registry
 
 
@@ -55,7 +65,7 @@ def synthetic_screen() -> bytes:
     draw.rectangle((0, 0, 1024, 34), fill="#1d2530")
     draw.text((16, 11), "Windows Terminal  -  project", fill="#c7d2de")
     lines = [
-        "PS C:\\work\\project> python -c \"import sys; print(sys.executable)\"",
+        'PS C:\\work\\project> python -c "import sys; print(sys.executable)"',
         "C:\\Users\\dev\\.venvs\\project\\Scripts\\python.exe",
         "PS C:\\work\\project> _",
     ]
@@ -104,8 +114,7 @@ async def timed(role: str, call) -> Outcome:
             time.monotonic() - started,
         )
     except Exception as problem:  # noqa: BLE001 - the report is the point
-        return Outcome(role, False, f"{type(problem).__name__}: {problem}",
-                       time.monotonic() - started)
+        return Outcome(role, False, type(problem).__name__, time.monotonic() - started)
 
 
 async def run_plan(adapter) -> str:
@@ -118,8 +127,7 @@ async def run_plan(adapter) -> str:
     )
     dispositions = [step_policy(step)[0] for step in plan.steps]
     if "block" in dispositions:
-        blocked = dispositions.count("block")
-        return f"{len(plan.steps)} steps, {blocked} blocked by the guard"
+        raise GuideError(422, "guard_rejected", "Synthetic safe task produced a blocked action.")
     return f"{len(plan.steps)} steps, first: {plan.steps[0].title!r}"
 
 
@@ -172,13 +180,40 @@ async def run_import(adapter) -> str:
     leaked = any(
         "ignore all previous" in (step.action + step.title).lower() for step in imported.plan.steps
     )
+    if leaked:
+        raise GuideError(422, "injection_carried_over", "Untrusted instructions entered the plan.")
     return (
         f"{len(imported.plan.steps)} steps, goal {imported.goal[:40]!r}, "
         f"injection {'LEAKED INTO THE PLAN' if leaked else 'not carried over'}"
     )
 
 
+async def run_analyze(adapter) -> str:
+    from app.guide.guard import vet_analysis
+
+    result = vet_analysis(await adapter.analyze([(str(uuid4()), synthetic_screen())]))
+    return f"{len(result.observations)} observations; needs_context={result.needs_context}"
+
+
+async def run_context(adapter) -> str:
+    result = vet_context(
+        await adapter.observe_context(
+            ContextRequest(
+                success_criterion="The path to python.exe is printed",
+                application_key="terminal",
+                step_title="Show which interpreter is running",
+                expected_result="A Python executable path",
+                later_titles=[],
+            ),
+            synthetic_screen(),
+        )
+    )
+    return f"stage={result.stage}; confidence={result.confidence:.2f}"
+
+
 RUNNERS = {
+    "analyze": run_analyze,
+    "observe_context": run_context,
     "plan": run_plan,
     "instruct": run_instruct,
     "observe": run_observe,
@@ -186,7 +221,7 @@ RUNNERS = {
 }
 
 
-async def main(roles: list[str]) -> int:
+async def main(roles: list[str], output: Path | None = None) -> int:
     settings = Settings()
     if settings.provider_api_key is None or not settings.provider_id:
         print(
@@ -213,6 +248,21 @@ async def main(roles: list[str]) -> int:
         outcomes.append(await timed(role, lambda a=adapter, r=role: RUNNERS[r](a)))
 
     print("\n".join(outcome.line() for outcome in outcomes))
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    "provider": settings.provider_id,
+                    "model": settings.provider_model or "adapter default",
+                    "scope": "synthetic smoke; not guidance quality certification",
+                    "outcomes": [asdict(outcome) for outcome in outcomes],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     failed = [outcome for outcome in outcomes if not outcome.ok]
     print(f"\n{len(outcomes) - len(failed)}/{len(outcomes)} roles answered and passed the guard.")
     if failed:
@@ -229,9 +279,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--roles",
-        default="plan,instruct,observe,import",
+        default="analyze,plan,instruct,observe,observe_context,import",
         help="Comma-separated subset to run. Each one is a billed request.",
     )
+    parser.add_argument("--output", type=Path, help="Write a machine-readable evidence report.")
     arguments = parser.parse_args()
     if not arguments.spend_real_money:
         print(__doc__)
@@ -241,4 +292,6 @@ if __name__ == "__main__":
     if unknown:
         print(f"Unknown role(s): {', '.join(unknown)}. Known: {', '.join(RUNNERS)}")
         raise SystemExit(2)
-    raise SystemExit(asyncio.run(main([role for role in chosen if role in RUNNERS])))
+    raise SystemExit(
+        asyncio.run(main([role for role in chosen if role in RUNNERS], arguments.output))
+    )

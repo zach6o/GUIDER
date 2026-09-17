@@ -3,9 +3,10 @@ from datetime import timedelta
 from uuid import uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app import models as m
+from app.erasure import erase_task
 from app.errors import GuideError
 from app.guide.engine import record_event, transition
 from app.guide.guard import vet_analysis, vet_instruction, vet_observation
@@ -25,6 +26,7 @@ from app.guide.steps import (
 )
 from app.imports.text import vet_import
 from app.providers.base import ImportContext, InstructionContext, ObserveContext
+from app.providers.settings import for_owner
 from app.schemas import Analysis
 from app.service import purge_image, usable
 
@@ -36,16 +38,14 @@ async def run_plan(app, db, pending, session, request_id: str) -> None:
         if pending.deadline_at <= m.now():
             raise GuideError(503, "operation_timeout", "Planning timed out.")
         task = await db.get(m.GuideTask, pending.task_id)
-        provider = app.state.providers.select("plan")
+        provider = await for_owner(app, db, pending.owner_id, "plan")
         proposal = await asyncio.wait_for(provider.plan(context_for(task)), timeout=30)
         plan = await persist(db, session, task, proposal)
         pending.result_ref = plan.id
         pending.status = "succeeded"
         await transition(db, session, "plan_ready", "plan_ready", request_id)
         await record_event(db, session, "plan.ready", request_id, {"plan_id": plan.id})
-        await transition(
-            db, session, "awaiting_user_confirmation", "plan_published", request_id
-        )
+        await transition(db, session, "awaiting_user_confirmation", "plan_published", request_id)
         await record_event(
             db,
             session,
@@ -103,7 +103,7 @@ async def run_replan(app, db, pending, session, request_id: str) -> None:
         previous = await confirmed_plan(db, session)
         done = await settled_steps(db, previous)
         reason, anomaly = await replan_reason(db, session)
-        provider = app.state.providers.select("plan")
+        provider = await for_owner(app, db, pending.owner_id, "plan")
         proposal = await asyncio.wait_for(
             provider.plan(context_for_replan(task, done, reason, anomaly)), timeout=30
         )
@@ -167,7 +167,7 @@ async def run_import(app, db, pending, session, request_id: str) -> None:
         )
         if imported is None:
             raise GuideError(404, "not_found", "That import is no longer available.")
-        provider = app.state.providers.select("import")
+        provider = await for_owner(app, db, pending.owner_id, "import")
         proposal = vet_import(
             await asyncio.wait_for(
                 provider.import_conversation(
@@ -186,9 +186,7 @@ async def run_import(app, db, pending, session, request_id: str) -> None:
         steps = await steps_for(db, plan)
         imported.extracted_goal = proposal.goal
         imported.steps_extracted = len(steps)
-        imported.steps_blocked = len(
-            [step for step in steps if step.policy_disposition == "block"]
-        )
+        imported.steps_blocked = len([step for step in steps if step.policy_disposition == "block"])
         imported.updated_at = m.now()
         pending.result_ref = plan.id
         pending.status = "succeeded"
@@ -250,7 +248,7 @@ async def run_instruction(app, db, pending, session, request_id: str) -> None:
             )
             return
         task = await db.get(m.GuideTask, pending.task_id)
-        provider = app.state.providers.select("instruct")
+        provider = await for_owner(app, db, pending.owner_id, "instruct")
         proposal = vet_instruction(
             await asyncio.wait_for(
                 provider.instruct(
@@ -282,9 +280,7 @@ async def run_instruction(app, db, pending, session, request_id: str) -> None:
     except (GuideError, OSError, ValueError, TimeoutError, ValidationError):
         pending.status = "failed"
         pending.error_code = "dependency_unavailable"
-        await transition(
-            db, session, "blocked", "instruction_failed", request_id
-        )
+        await transition(db, session, "blocked", "instruction_failed", request_id)
         await record_event(
             db, session, "operation.failed", request_id, {"operation_id": pending.id}
         )
@@ -326,7 +322,7 @@ async def run_verification(app, db, pending, session, request_id: str) -> None:
         # The adapter proposes; the guard vets it; only then does it count.
         result = vet_observation(
             await asyncio.wait_for(
-                app.state.observer.observe(
+                (await for_owner(app, db, pending.owner_id, "observe")).observe(
                     ObserveContext(
                         success_criterion=step.success_criterion,
                         expected_result=step.expected_result,
@@ -445,10 +441,11 @@ async def tick(app) -> None:
                 usable(image)
                 pixels.append((image.id, await app.state.storage.read(image.object_key)))
             # The adapter cannot approve its own output; the guard decides.
+            provider = await for_owner(app, db, pending.owner_id, "analyze")
             result = vet_analysis(
                 Analysis.model_validate(
                     await asyncio.wait_for(
-                        app.state.provider.analyze(pixels),
+                        provider.analyze(pixels),
                         timeout=10,
                     )
                 )
@@ -506,7 +503,8 @@ async def sweep(app) -> None:
             await db.scalars(
                 select(m.ScreenshotRow)
                 .where(
-                    m.ScreenshotRow.expires_at <= m.now(),
+                    (m.ScreenshotRow.expires_at <= m.now())
+                    | (m.ScreenshotRow.status == "deleting"),
                     m.ScreenshotRow.object_key.is_not(None),
                 )
                 .limit(100)
@@ -515,6 +513,25 @@ async def sweep(app) -> None:
         for image in expired:
             await db.scalar(select(m.User).where(m.User.id == image.owner_id).with_for_update())
             await purge_image(db, app.state.storage, image, str(uuid4()))
+        tasks = list(
+            await db.scalars(
+                select(m.GuideTask)
+                .where(
+                    m.GuideTask.expires_at <= m.now(),
+                )
+                .limit(50)
+            )
+        )
+        for task in tasks:
+            await db.scalar(select(m.User).where(m.User.id == task.owner_id).with_for_update())
+            await erase_task(db, app.state.storage, task, str(uuid4()))
+        for model in (m.GuidanceEvent, m.ScreenContextRow, m.IdempotencyRecord):
+            await db.execute(delete(model).where(model.expires_at <= m.now()))
+        await db.execute(
+            delete(m.ProviderUsage).where(
+                m.ProviderUsage.created_at < m.now() - timedelta(days=30),
+            )
+        )
 
 
 async def run_worker(app) -> None:

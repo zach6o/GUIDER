@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     database_url: str = "sqlite+aiosqlite:///.local/guide.db"
     storage_path: Path = Path(".local/media")
+    media_encryption_key: SecretStr | None = None
     supabase_url: str = ""
     # Account-mode provider access, off unless configured. D01 has not selected a
     # provider, so this stays a development switch: with no key the engine runs on
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     # Root for credential encryption. Without it, a credential cannot be stored
     # at all — which is the correct refusal, because the alternative is plaintext.
     credential_root: SecretStr | None = None
+    provider_daily_calls: int = Field(default=1000, ge=1, le=100_000)
     allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     def check(self) -> None:

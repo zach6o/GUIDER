@@ -106,8 +106,7 @@ export function securityHeaders(input: PolicyInput = {}): Record<string, string>
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
-    // The guide asks for a display capture and nothing else. Every other
-    // powerful feature is refused here rather than declined per prompt.
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), display-capture=(self)',
+    // Capture and optional dictation still need explicit browser permission.
+    'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(), display-capture=(self)',
   };
 }

@@ -20,7 +20,7 @@ on:
       roles:
         description: Roles to exercise. Each one is a billed request.
         required: true
-        default: plan,instruct,observe,import
+        default: analyze,plan,instruct,observe,observe_context,import
 
 permissions:
   contents: read
@@ -51,19 +51,22 @@ jobs:
           GUIDE_PROVIDER_ID: ${{ inputs.provider }}
           GUIDE_PROVIDER_MODEL: ${{ inputs.model }}
           GUIDE_PROVIDER_API_KEY: ${{ secrets.PROVIDER_API_KEY }}
+          GUIDE_SMOKE_ROLES: ${{ inputs.roles }}
         run: |
           if [ -z "${GUIDE_PROVIDER_API_KEY}" ]; then
             echo "::error::No PROVIDER_API_KEY in the provider-smoke environment."
             exit 1
           fi
           uv run python -m scripts.smoke_provider \
-            --spend-real-money --roles "${{ inputs.roles }}" | tee smoke.txt
+            --spend-real-money --roles "$GUIDE_SMOKE_ROLES" --output smoke.json | tee smoke.txt
 
       - name: Keep the answers as evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: provider-smoke
-          path: user-mode/backend/smoke.txt
+          path: |
+            user-mode/backend/smoke.txt
+            user-mode/backend/smoke.json
           retention-days: 14
           if-no-files-found: ignore

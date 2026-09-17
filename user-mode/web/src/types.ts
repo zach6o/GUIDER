@@ -131,6 +131,9 @@ export interface ContextTick {
   mark: SeenMark | null;
 }
 
+export interface HistoryFilters { q?: string; outcome?: string; since?: string; until?: string }
+export type StepEdit = Pick<Step, 'id' | 'title' | 'action' | 'expected_result' | 'success_criterion'>;
+
 export interface HistoryPage {
   items: { session: Session; task_title: string }[];
   /** The session to continue after, or null when this is the last page. The
@@ -147,9 +150,11 @@ export interface Resumed {
 }
 
 export interface GuideApi {
+  revisePlan(plan: Plan, session: Session, steps: StepEdit[]): Promise<{ plan: Plan; session: Session }>;
+  exportSession(id: string): Promise<Record<string, unknown>>;
   create(input: TaskInput): Promise<{ task: Task; session: Session }>;
   importConversation(text: string, source: ImportSource): Promise<ImportAccepted>;
-  history(cursor?: string): Promise<HistoryPage>;
+  history(cursor?: string, filters?: HistoryFilters): Promise<HistoryPage>;
   task(id: string): Promise<Task>;
   session(id: string): Promise<Session>;
   upload(task: Task, session: Session, file: Blob, replaces?: Screenshot): Promise<{ screenshot: Screenshot; session: Session }>;
@@ -157,6 +162,7 @@ export interface GuideApi {
   analyze(task: Task, session: Session, screenshot: Screenshot): Promise<{ operation_id: string; session: Session }>;
   requestPlan(task: Task, session: Session): Promise<{ operation_id: string; session: Session }>;
   plan(id: string): Promise<Plan>;
+  sessionPlan(id: string): Promise<Plan | null>;
   confirmPlan(plan: Plan, session: Session): Promise<{ plan: Plan; session: Session }>;
   operation(id: string): Promise<Operation>;
   deleteImage(id: string): Promise<Receipt>;

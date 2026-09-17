@@ -251,11 +251,11 @@ def test_a_configured_provider_serves_the_roles_it_declares():
         environment="test", provider_id=ANTHROPIC.id, provider_api_key=KEY
     )
     registry = default_registry(configured)
-    assert isinstance(registry.select("observe"), FixtureProvider)  # fixture first
+    assert isinstance(registry.select("observe"), AnthropicClaude)
     assert isinstance(registry.build(ANTHROPIC.id, "observe"), AnthropicClaude)
     assert ANTHROPIC.supports("plan") and ANTHROPIC.supports("guide")
     with pytest.raises(GuideError):
-        registry.build(ANTHROPIC.id, "analyze")  # a role it does not declare
+        registry.build(ANTHROPIC.id, "verify")  # a role it does not declare
 
 
 def test_the_rendered_schema_is_the_same_one_for_every_dialect():

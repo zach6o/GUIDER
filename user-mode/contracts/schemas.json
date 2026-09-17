@@ -134,6 +134,98 @@
         ],
         "title": "BBox"
       },
+      "BindingInput": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "analyze",
+              "plan",
+              "instruct",
+              "observe",
+              "observe_context",
+              "import"
+            ],
+            "title": "Role"
+          },
+          "provider_id": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Provider Id"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Model",
+            "default": ""
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "provider_id",
+          "accepted"
+        ],
+        "title": "BindingInput"
+      },
+      "BindingView": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "analyze",
+              "plan",
+              "instruct",
+              "observe",
+              "observe_context",
+              "import"
+            ],
+            "title": "Role"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "has_key": {
+            "type": "boolean",
+            "title": "Has Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "provider_id",
+          "model",
+          "has_key"
+        ],
+        "title": "BindingView"
+      },
       "Body_upload_api_v1_guide_tasks__task_id__screenshots_post": {
         "properties": {
           "file": {
@@ -694,6 +786,25 @@
         ],
         "title": "DeletionReceipt"
       },
+      "Envelope_BindingView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BindingView"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[BindingView]"
+      },
       "Envelope_Claimed_": {
         "properties": {
           "data": {
@@ -1074,6 +1185,25 @@
         ],
         "title": "Envelope[Session]"
       },
+      "Envelope_SettingsView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SettingsView"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SettingsView]"
+      },
       "Envelope_SkippedForward_": {
         "properties": {
           "data": {
@@ -1150,6 +1280,32 @@
         ],
         "title": "Envelope[Task]"
       },
+      "Envelope_Union_Plan__NoneType__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[Union[Plan, NoneType]]"
+      },
       "Envelope_Uploaded_": {
         "properties": {
           "data": {
@@ -1168,6 +1324,45 @@
           "request_id"
         ],
         "title": "Envelope[Uploaded]"
+      },
+      "Envelope_UsageView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageView"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[UsageView]"
+      },
+      "Envelope_bool_": {
+        "properties": {
+          "data": {
+            "type": "boolean",
+            "title": "Data"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[bool]"
       },
       "ErrorBody": {
         "properties": {
@@ -2212,6 +2407,37 @@
         ],
         "title": "Plan"
       },
+      "PlanEdit": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "plan_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Plan Version"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepEdit"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version",
+          "plan_version",
+          "steps"
+        ],
+        "title": "PlanEdit"
+      },
       "PlanRequest": {
         "properties": {
           "session_id": {
@@ -2232,6 +2458,46 @@
           "expected_version"
         ],
         "title": "PlanRequest"
+      },
+      "ProviderView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "local": {
+            "type": "boolean",
+            "title": "Local"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "roles",
+          "models",
+          "local"
+        ],
+        "title": "ProviderView"
       },
       "ReplanRequest": {
         "properties": {
@@ -2861,6 +3127,57 @@
         ],
         "title": "SessionState"
       },
+      "SettingsView": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderView"
+            },
+            "type": "array",
+            "title": "Providers"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/BindingView"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "encrypted_storage_available": {
+            "type": "boolean",
+            "title": "Encrypted Storage Available"
+          },
+          "default_provider": {
+            "type": "string",
+            "title": "Default Provider"
+          },
+          "daily_limit": {
+            "type": "integer",
+            "title": "Daily Limit"
+          },
+          "managed_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed Provider"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "providers",
+          "bindings",
+          "encrypted_storage_available",
+          "default_provider",
+          "daily_limit"
+        ],
+        "title": "SettingsView"
+      },
       "SkipForwardRequest": {
         "properties": {
           "expected_version": {
@@ -3146,6 +3463,48 @@
         ],
         "title": "Step"
       },
+      "StepEdit": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Action"
+          },
+          "expected_result": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Expected Result"
+          },
+          "success_criterion": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Success Criterion"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "action",
+          "expected_result",
+          "success_criterion"
+        ],
+        "title": "StepEdit"
+      },
       "StopRequest": {
         "properties": {
           "expected_version": {
@@ -3428,6 +3787,30 @@
           "session"
         ],
         "title": "Uploaded"
+      },
+      "UsageView": {
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "title": "Calls"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded"
+          },
+          "remaining": {
+            "type": "integer",
+            "title": "Remaining"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "calls",
+          "succeeded",
+          "remaining"
+        ],
+        "title": "UsageView"
       },
       "ValidationError": {
         "properties": {

@@ -1,0 +1,64 @@
+# Loopback-only development deployment; the production startup gate stays closed.
+services:
+  database:
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    environment:
+      POSTGRES_USER: guider
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run the deployment setup script first}
+      POSTGRES_DB: guider
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U guider -d guider"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: ../backend
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      database: {condition: service_healthy}
+    environment:
+      GUIDE_ENVIRONMENT: development
+      GUIDE_DATABASE_URL: postgresql+asyncpg://guider:${POSTGRES_PASSWORD}@database:5432/guider
+      GUIDE_CREDENTIAL_ROOT: ${GUIDE_CREDENTIAL_ROOT:?Run the deployment setup script first}
+      GUIDE_MEDIA_ENCRYPTION_KEY: ${GUIDE_MEDIA_ENCRYPTION_KEY:?Run the deployment setup script first}
+      GUIDE_SUPABASE_URL: ${GUIDE_SUPABASE_URL:-}
+    volumes: [media:/data/media]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+  web:
+    build:
+      context: ../web
+      args:
+        VITE_SUPABASE_URL: ${GUIDE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+    environment:
+      VITE_SUPABASE_URL: ${GUIDE_SUPABASE_URL:-}
+    ports: ["127.0.0.1:5173:5173"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+  checks-db:
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    profiles: [checks]
+    environment:
+      POSTGRES_USER: guider
+      POSTGRES_PASSWORD: synthetic-tests-only
+      POSTGRES_DB: guider_checks
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U guider -d guider_checks"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  checks:
+    profiles: [checks]
+    build: {context: ../backend, target: checks}
+    depends_on:
+      checks-db: {condition: service_healthy}
+    environment:
+      GUIDE_TEST_DATABASE_URL: postgresql+asyncpg://guider:synthetic-tests-only@checks-db:5432/guider_checks
+volumes:
+  database:
+  media:

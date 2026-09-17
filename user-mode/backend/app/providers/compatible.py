@@ -26,6 +26,7 @@ from pydantic import SecretStr, ValidationError
 
 from app.errors import GuideError
 from app.guide.guard import POLICY
+from app.providers.analysis import BRIEF, Explanation
 from app.providers.base import (
     ContextRequest,
     ImportContext,
@@ -45,6 +46,7 @@ from app.providers.schema import render
 # bounded question does not need room for an essay, and the cap is what turns a
 # truncated answer into a stated error rather than malformed JSON.
 LIMITS = {
+    "analyze": 2400,
     "guide": 1100,
     "observe": 400,
     "observe_context": 700,
@@ -54,6 +56,7 @@ LIMITS = {
 }
 
 ROLE_BRIEF = {
+    "analyze": BRIEF,
     "observe": (
         "Decide whether the stated success criterion is already true on the screen shown. "
         "Answer only that question. Do not write instructions, and do not guess: if the screen "
@@ -213,6 +216,15 @@ class OpenAICompatible:
             ) from None
 
     # --- roles -----------------------------------------------------------
+
+    async def analyze_images(self, images: list[bytes]) -> Explanation:
+        body = self.body("analyze", Explanation, "explanation", {"image_count": len(images)})
+        content = body["messages"][1]["content"]
+        for pixels in images:
+            content.append({"type": "image_url", "image_url": {
+                "url": f"data:image/png;base64,{base64.b64encode(pixels).decode()}"
+            }})
+        return await self.send(body, Explanation)
 
     async def validate(self, key: SecretStr, model: str) -> None:
         try:

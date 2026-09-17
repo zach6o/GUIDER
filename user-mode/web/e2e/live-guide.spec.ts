@@ -31,6 +31,7 @@ async function simulatedWindow(page: Page) {
 
 async function connect(page: Page) {
   await page.goto('/#live');
+  await page.bringToFront();
   await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
   await page.getByLabel('OpenAI API key').fill('sk-test-not-real-key-1234567890');
   await page.getByRole('checkbox', { name: 'I agree to send reviewed frames' }).check();
@@ -59,9 +60,6 @@ test('real capture adapter, explicit cloud review, answer, disconnect', async ({
     return route.fulfill({ json: { connection_token: 'capability-test-only', model: 'gpt-4.1-mini', expires_in_seconds: 1800 }, headers });
   });
   await page.setViewportSize({ width: 1440, height: 1050 });
-  await page.goto('/#live');
-  await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
-  await page.screenshot({ path: testInfo.outputPath('cloud-setup.png'), fullPage: true, animations: 'disabled' });
   await connect(page);
   await page.getByRole('button', { name: 'Check screen', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A quick privacy check.' })).toBeVisible();
@@ -74,7 +72,9 @@ test('real capture adapter, explicit cloud review, answer, disconnect', async ({
   expect(sent[0].reviewed).toBe(true);
   expect(String(sent[0].image_base64)).toMatch(/^iVBOR/);
   expect(JSON.stringify(sent[0])).not.toContain('sk-test');
-  await page.screenshot({ path: testInfo.outputPath('live-guidance.png'), fullPage: true, animations: 'disabled' });
+  if (process.env.GUIDE_CAPTURE_EVIDENCE) {
+    await page.screenshot({ path: testInfo.outputPath('live-guidance.png'), fullPage: true, animations: 'disabled' });
+  }
   await page.getByRole('button', { name: 'Stop sharing', exact: true }).click();
   await expect(page.getByRole('heading', { name: guidance.next_step })).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-capture-stopped', 'true');

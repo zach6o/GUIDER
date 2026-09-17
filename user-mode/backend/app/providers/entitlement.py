@@ -74,7 +74,9 @@ def managed_available(settings: Settings) -> bool:
     deployment with one and not the other is misconfigured rather than
     half-enabled, so this answers False for both.
     """
-    return bool(settings.managed_provider_id) and bool(settings.managed_provider_key)
+    return bool(settings.managed_provider_id) and bool(settings.managed_provider_key) and bool(
+        settings.credential_root
+    )
 
 
 def entitled(settings: Settings, tier: str) -> bool:

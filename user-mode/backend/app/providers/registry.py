@@ -10,6 +10,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from app.errors import GuideError
+from app.providers.analysis import SavedAnalysis
 from app.providers.anthropic import MODELS as CLAUDE_MODELS
 from app.providers.anthropic import AnthropicClaude
 from app.providers.base import CapabilityDescriptor, Role
@@ -51,7 +52,9 @@ OPENAI = CapabilityDescriptor(
 ANTHROPIC = CapabilityDescriptor(
     id="anthropic",
     display_name="Claude",
-    roles=frozenset({"guide", "observe", "observe_context", "plan", "instruct", "import"}),
+    roles=frozenset({
+        "analyze", "guide", "observe", "observe_context", "plan", "instruct", "import",
+    }),
     vision=True,
     structured_output="native",
     max_image_px=2560,
@@ -66,7 +69,7 @@ ANTHROPIC = CapabilityDescriptor(
 # Every service behind `app/providers/compatible.py`, described once. The
 # adapter class is the only thing that knows a vendor's name; this table is what
 # the registry selects on.
-ENGINE_ROLES = frozenset({"observe", "observe_context", "plan", "instruct", "import"})
+ENGINE_ROLES = frozenset({"analyze", "observe", "observe_context", "plan", "instruct", "import"})
 
 
 def _compatible(adapter, cost: str, local: bool = False) -> CapabilityDescriptor:
@@ -96,10 +99,26 @@ COMPATIBLE: dict[str, tuple[CapabilityDescriptor, type]] = {
     )
 }
 
+CATALOG = {ANTHROPIC.id: (ANTHROPIC, AnthropicClaude), **COMPATIBLE}
+
+
+def available(provider_id: str, role: Role) -> CapabilityDescriptor:
+    entry = CATALOG.get(provider_id)
+    if entry is None or not entry[0].supports(role):
+        raise GuideError(422, "provider_unavailable", "Choose a provider supporting this role.")
+    return entry[0]
+
+
+def build_configured(provider_id: str, role: Role, **kwargs: Any) -> Any:
+    available(provider_id, role)
+    adapter = CATALOG[provider_id][1](**kwargs)
+    return SavedAnalysis(adapter) if role == "analyze" else adapter
+
 
 class ProviderRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, tuple[CapabilityDescriptor, Callable[..., Any]]] = {}
+        self.preferred: str | None = None
 
     def register(
         self, descriptor: CapabilityDescriptor, factory: Callable[..., Any]
@@ -142,10 +161,15 @@ class ProviderRegistry:
                 "dependency_unavailable",
                 "No provider is configured for this capability.",
             )
-        return entry[1](**kwargs)
+        adapter = entry[1](**kwargs)
+        return SavedAnalysis(adapter) if role == "analyze" and hasattr(
+            adapter, "analyze_images"
+        ) else adapter
 
     def select(self, role: Role, *, local_only: bool = False, **kwargs: Any) -> Any:
-        """First adapter satisfying `role`. `local_only` keeps work off the network."""
+        """Explicit configuration wins; unsupported roles fail without fallback."""
+        if self.preferred and not local_only:
+            return self.build(self.preferred, role, **kwargs)
         for descriptor in self.for_role(role):
             if local_only and not descriptor.local:
                 continue
@@ -158,18 +182,11 @@ class ProviderRegistry:
 
 
 def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
-    """Fixture first, always. A configured provider is registered after it, so
-    every role still resolves with no credentials and no network, and adding one
-    changes which adapter answers rather than whether anything does.
-
-    Ordering is the whole selection rule: `select` takes the first adapter that
-    satisfies the role, so the fixture keeps serving the engine roles until a
-    deployment deliberately prefers something else.
-    """
+    """No configuration means fixture mode. Explicit configuration selects real work."""
     registry = ProviderRegistry()
     registry.register(FIXTURE, FixtureProvider)
     registry.register(OPENAI, OpenAIVision)
-    if settings is not None and settings.provider_api_key is not None:
+    if settings is not None and (settings.provider_id or settings.provider_api_key):
         configured = {
             ANTHROPIC.id: AnthropicClaude,
             **{key: value[1] for key, value in COMPATIBLE.items()},
@@ -188,6 +205,8 @@ def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
             if settings.provider_id == ANTHROPIC.id
             else COMPATIBLE[settings.provider_id][0]
         )
+        if not descriptor.local and not settings.provider_api_key:
+            raise GuideError(503, "dependency_unavailable", "The configured provider needs a key.")
         registry.register(
             descriptor,
             partial(
@@ -196,6 +215,7 @@ def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
                 model=descriptor.model_or_default(settings.provider_model),
             ),
         )
+        registry.preferred = descriptor.id
     return registry
 
 

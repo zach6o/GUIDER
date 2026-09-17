@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native:
+    name: Windows shell and synthetic PKCE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build user-mode/client/windows/Guider.Windows.csproj --configuration Release
+      - run: dotnet run --project user-mode/client/windows-tests/Guider.NativeChecks.csproj --configuration Release
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
@@ -52,6 +63,15 @@ jobs:
       - name: Unit tests
         run: uv run pytest -q
 
+      - name: Synthetic authenticated load check
+        run: uv run python -m scripts.load_test --requests 200 --concurrency 8 --output .local/load-report.json
+
+      - name: Keep load evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-load
+          path: user-mode/backend/.local/load-report.json
+
       - name: Unit tests on PostgreSQL
         env:
           GUIDE_TEST_DATABASE_URL: postgresql+asyncpg://guider:guider@localhost:5432/guider_test
@@ -61,6 +81,15 @@ jobs:
         run: |
           mkdir -p .local
           uv run alembic upgrade head
+
+      - name: Apply PostgreSQL migrations and check model parity
+        env:
+          PGPASSWORD: guider
+          GUIDE_DATABASE_URL: postgresql+asyncpg://guider:guider@localhost:5432/guider_migrations
+        run: |
+          psql -h localhost -U guider -d postgres -c 'CREATE DATABASE guider_migrations'
+          uv run alembic upgrade head
+          uv run alembic check
 
       - name: Migrations match models
         run: uv run alembic check
@@ -97,3 +126,26 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser scenarios
+        run: npx playwright test
+
+      - name: Install uv for authenticated browser scenarios
+        uses: astral-sh/setup-uv@v10.1.0
+
+      - name: Install backend for authenticated browser scenarios
+        run: uv sync --locked --project ../backend
+
+      - name: Authenticated browser and API integration
+        run: npm run test:integration
+
+      - name: Browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results
+          path: user-mode/web/test-results
+          retention-days: 7

@@ -78,7 +78,7 @@ describe('the headers in front of the files', () => {
   it('refuses every powerful feature except the one the guide asks for', () => {
     const permissions = securityHeaders()['Permissions-Policy'];
     expect(permissions).toContain('camera=()');
-    expect(permissions).toContain('microphone=()');
+    expect(permissions).toContain('microphone=(self)');
     expect(permissions).toContain('display-capture=(self)');
   });
 });

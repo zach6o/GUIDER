@@ -1,5 +1,29 @@
 # 07 · API contracts
 
+## Implemented completion extensions (2026-09-17)
+
+The generated [OpenAPI contract](../../user-mode/contracts/openapi.json) is the
+exact implemented schema for these authenticated `/api/v1/guide` routes:
+
+| Method and path | Behavior |
+|---|---|
+| `GET /providers` | Capability catalogue, owner bindings, encryption availability, default provider, daily call limit and active managed provider; never returns keys |
+| `POST /providers/bindings` | `{role, provider_id, model, api_key?, accepted:true}`; validates the role/model, encrypts remote credentials, updates the owner's binding and revokes active observation |
+| `DELETE /providers/bindings/{role}` | Removes only the owner's role binding and revokes observation |
+| `GET /providers/usage` | Attempted/succeeded call counts and remaining call budget over the last 24 hours; failed provider requests are still attempts |
+| `GET /sessions/{session_id}/plan` | Latest non-superseded plan, or null |
+| `POST /plans/{plan_id}/revisions` | Idempotency key plus `{expected_version, plan_version, steps}`. Every current pending step appears exactly once; editable fields are title, action, expected result and success criterion. Array order becomes plan order. Returns a new draft and session; confirmation is required again |
+
+The revision route returns 409 for stale/started plans and 422 for duplicated or
+missing steps. Existing risk/evidence metadata is preserved and policy is
+re-evaluated. Provider bindings support analyze, plan, instruct, observe,
+observe_context and import. Credentials remain backend-only. Managed access is
+disclosed in settings and resolved through the same adapters and policy guards.
+
+Image deletion can return a `purging` receipt during a storage outage. Reads and
+dependent replay results are denied immediately; the worker retains the private
+object key to retry deletion. This does not certify task/account/backup erasure.
+
 ## Implemented local development connector
 
 [ADR-015](adr/015-browser-observation-and-personal-cloud.md) adds a separate `/api/v1/local-guide` prefix. These routes require a loopback client, a localhost Host and an exact configured local browser Origin. They never expose saved task/account resources. Success bodies are returned directly; errors use the existing error envelope. Generated schemas in [`openapi.json`](../../user-mode/contracts/openapi.json) cover the implemented surface.

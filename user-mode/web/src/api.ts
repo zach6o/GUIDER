@@ -8,6 +8,10 @@ export const supabase = url && key ? createClient(url, key, {
   auth: { flowType: 'pkce', persistSession: false, autoRefreshToken: true, detectSessionInUrl: true },
 }) : null;
 export const isDemo = !supabase;
+let identityGeneration = 0;
+supabase?.auth.onAuthStateChange(event => {
+  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') identityGeneration++;
+});
 const base = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1/guide';
 
 /** Carries the status and code so a caller can tell "nothing here" from "went
@@ -16,7 +20,8 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly code = '') { super(message); }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, binary = false): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}, binary = false): Promise<T> {
+  const generation = identityGeneration;
   const { data } = await supabase!.auth.getSession();
   if (!data.session) throw new Error('Sign in to continue.');
   const headers = new Headers(init.headers);
@@ -26,19 +31,34 @@ async function request<T>(path: string, init: RequestInit = {}, binary = false):
   const response = await fetch(`${base}${path}`, { ...init, headers, cache: 'no-store' });
   if (!response.ok) {
     const error = await response.json().catch(() => null);
+    if (response.status === 401) {
+      // Clear local credentials and trigger the application's capture cleanup.
+      await supabase!.auth.signOut({ scope: 'local' });
+    }
     throw new ApiError(
       error?.error?.message || 'Could not reach Guider. Please try again.', response.status,
       error?.error?.code || '',
     );
   }
-  return binary ? await response.blob() as T : (await response.json()).data as T;
+  const result = binary ? await response.blob() as T : (await response.json()).data as T;
+  if (generation !== identityGeneration) throw new ApiError('Sign in again to continue.', 401);
+  return result;
 }
 
 const post = <T,>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 const remote: GuideApi = {
+  revisePlan: (plan, session, steps) => post(`/plans/${plan.id}/revisions`, {
+    expected_version: session.state_version, plan_version: plan.version, steps,
+  }),
+  exportSession: id => request(`/sessions/${id}/export`),
   create: input => post('/tasks', input),
   importConversation: (text, source) => post('/imports/conversations', { text, source }),
-  history: cursor => request(`/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+  history: (cursor, filters = {}) => {
+    const query = new URLSearchParams();
+    if (cursor) query.set('cursor', cursor);
+    for (const [name, value] of Object.entries(filters)) if (value) query.set(name, value);
+    return request(`/sessions?${query}`);
+  },
   task: id => request(`/tasks/${id}`),
   session: id => request(`/sessions/${id}`),
   upload: (task, session, file, replaces) => {
@@ -60,6 +80,7 @@ const remote: GuideApi = {
     session_id: session.id, expected_version: session.state_version,
   }),
   plan: id => request(`/plans/${id}`),
+  sessionPlan: id => request(`/sessions/${id}/plan`),
   confirmPlan: (plan, session) => post(`/plans/${plan.id}/confirm`, {
     expected_version: session.state_version, plan_version: plan.version,
   }),

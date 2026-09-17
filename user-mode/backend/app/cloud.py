@@ -16,7 +16,7 @@ from pydantic import Field, SecretStr
 
 from app.errors import GuideError
 from app.guide.guard import POLICY, vet_guidance
-from app.media import normalize
+from app.media import decode
 from app.providers.base import MAX_IMAGE, CheckInput, Guidance
 from app.schemas import Schema
 
@@ -183,7 +183,7 @@ def prepare_cloud_image(encoded: str) -> bytes:
         raise GuideError(422, "image_unreadable", "Could not read this frame.") from None
     if len(raw) > MAX_IMAGE:
         raise GuideError(413, "payload_too_large", "Crop this frame to less than 4 MiB.")
-    clean = normalize(raw)
+    clean = decode(raw)
     if max(clean.width, clean.height) > 2560 or len(clean.pixels) > MAX_IMAGE:
         raise GuideError(
             413, "payload_too_large", "Use a smaller crop, at most 2,560 pixels per side."

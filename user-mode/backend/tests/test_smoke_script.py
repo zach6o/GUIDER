@@ -63,7 +63,9 @@ def test_an_answer_is_reported_with_its_latency():
 def test_every_role_it_offers_has_a_runner():
     # The command line accepts a subset; an id with no runner would fail after
     # the request rather than before it.
-    assert set(smoke_provider.RUNNERS) == {"plan", "instruct", "observe", "import"}
+    assert set(smoke_provider.RUNNERS) == {
+        "analyze", "plan", "instruct", "observe", "observe_context", "import",
+    }
 
 
 def _fail(message: str):

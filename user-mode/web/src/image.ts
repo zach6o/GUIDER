@@ -1,5 +1,30 @@
 import type { Box } from './types';
 
+// Inspect container chunks before canvas flattens animation into a still frame.
+export function isAnimated(bytes: Uint8Array): boolean {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (bytes.length >= 8 && bytes[0] === 137 && tag(1) === 'PNG\r') {
+    for (let offset = 8; offset + 12 <= bytes.length;) {
+      const size = view.getUint32(offset);
+      if (size > bytes.length - offset - 12) break;
+      if (tag(offset + 4) === 'acTL') return true;
+      offset += size + 12;
+    }
+  }
+  if (bytes.length >= 12 && tag(0) === 'RIFF' && tag(8) === 'WEBP') {
+    for (let offset = 12; offset + 8 <= bytes.length;) {
+      const size = view.getUint32(offset + 4, true);
+      if (size > bytes.length - offset - 8) break;
+      const type = tag(offset);
+      if (type === 'ANIM' || type === 'ANMF'
+        || (type === 'VP8X' && size > 0 && (bytes[offset + 8] & 2) !== 0)) return true;
+      offset += size + 8 + (size % 2);
+    }
+  }
+  return false;
+}
+
 export function validBox(box: Box, width: number, height: number): boolean {
   return Object.values(box).every(Number.isFinite) && box.x >= 0 && box.y >= 0
     && box.width > 0 && box.height > 0 && box.x + box.width <= width && box.y + box.height <= height;
@@ -24,6 +49,7 @@ export async function editImage(blob: Blob, box: Box, mode: 'crop' | 'hide'): Pr
 export async function prepareImage(file: Blob): Promise<Blob> {
   if (file.size > 10 * 1024 * 1024) throw new Error('Choose an image smaller than 10 MiB.');
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PNG, JPEG or WebP image.');
+  if (isAnimated(new Uint8Array(await file.arrayBuffer()))) throw new Error('Choose a still image, not an animation.');
   const bitmap = await createImageBitmap(file).catch(() => { throw new Error('This image could not be opened.'); });
   const width = bitmap.width, height = bitmap.height;
   bitmap.close();

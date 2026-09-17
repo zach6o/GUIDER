@@ -283,6 +283,41 @@ function instructOperation(): Operation {
 }
 
 export const demoApi: GuideApi = {
+  async revisePlan(plan, session, edits) {
+    const current = requireItem(sessions, session.id);
+    const original = requireItem(plans, plan.id);
+    if (current.state_version !== session.state_version || original.status === 'superseded')
+      throw new Error('Review the latest plan before editing.');
+    if (current.state !== 'awaiting_user_confirmation' || original.steps.some(step => step.status !== 'pending'))
+      throw new Error('Edit the plan before starting its steps.');
+    if (edits.length !== original.steps.length || new Set(edits.map(step => step.id)).size !== edits.length
+      || edits.some(edit => !original.steps.some(step => step.id === edit.id)))
+      throw new Error('Include each current step exactly once.');
+    const replacement: Plan = { ...clone(original), id: uid(), version: original.version + 1,
+      status: 'draft', confirmed_at: null, created_at: timestamp(), updated_at: timestamp(),
+      steps: edits.map((edit, index) => {
+        const previous = original.steps.find(step => step.id === edit.id)!;
+        const blocked = RESTRICTED.test(`${edit.title} ${edit.action} ${edit.success_criterion}`)
+          || INJECTION.test(`${edit.title} ${edit.action}`);
+        return { ...previous, ...edit, id: uid(), ordinal: index + 1,
+          risk: blocked ? 'high' : previous.risk, policy_disposition: blocked ? 'block' : 'allow' };
+      }),
+    };
+    original.status = 'superseded'; plans.set(replacement.id, replacement); current.state_version++;
+    emit(current, 'plan.confirmation_required', { plan_id: replacement.id, version: replacement.version });
+    return clone({ plan: replacement, session: current });
+  },
+  async exportSession(id) {
+    const session = requireItem(sessions, id);
+    const task = requireItem(tasks, session.task_id);
+    const plan = [...plans.values()].filter(item => item.session_id === id)
+      .sort((a, b) => b.version - a.version)[0];
+    return clone({ exported_at: timestamp(), goal: task.goal, title: task.title,
+      outcome: session.outcome, summary: summaries.get(id) ?? null,
+      steps: plan?.steps.map(step => ({ title: step.title, action: step.action,
+        status: selfReported.get(id)?.has(step.id) ? 'user_reported' : step.status })) ?? [],
+      frames_observed: 0 });
+  },
   async create(input) {
     const task: Task = { ...input, id: uid(), title: input.goal.slice(0, 120), status: 'open',
       current_session_id: null, created_at: timestamp(), updated_at: timestamp() };
@@ -356,11 +391,17 @@ export const demoApi: GuideApi = {
       },
     });
   },
-  async history(cursor) {
+  async history(cursor, filters = {}) {
     // Paged like the server's, so the page that asks for more is exercised here
     // too rather than only against a backend the demo never reaches.
     const all = [...sessions.values()].reverse().map(session => ({ session,
-      task_title: requireItem(tasks, session.task_id).title }));
+      task_title: requireItem(tasks, session.task_id).title })).filter(({ session, task_title }) => {
+        const task = requireItem(tasks, session.task_id);
+        return (!filters.q || `${task_title} ${task.goal}`.toLowerCase().includes(filters.q.toLowerCase()))
+          && (!filters.outcome || session.outcome === filters.outcome)
+          && (!filters.since || session.created_at >= filters.since)
+          && (!filters.until || session.created_at <= filters.until);
+      });
     const start = cursor ? all.findIndex(item => item.session.id === cursor) + 1 : 0;
     const page = all.slice(start, start + DEMO_HISTORY_PAGE);
     const last = page[page.length - 1];
@@ -441,6 +482,11 @@ export const demoApi: GuideApi = {
     return clone({ operation_id: operation.id, session: current });
   },
   async plan(id) { return clone(requireItem(plans, id)); },
+  async sessionPlan(id) {
+    requireItem(sessions, id);
+    return clone([...plans.values()].filter(plan => plan.session_id === id && plan.status !== 'superseded')
+      .sort((a, b) => b.version - a.version)[0] ?? null);
+  },
   async confirmPlan(plan, session) {
     const current = requireItem(sessions, session.id);
     const saved = requireItem(plans, plan.id);

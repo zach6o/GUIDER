@@ -244,7 +244,11 @@ class CapabilityDescriptor:
     def model_or_default(self, model: str) -> str:
         """The model to use, or a refusal that names neither provider nor model."""
         chosen = model or self.default_model
-        if self.models and chosen not in self.models:
+        if not chosen or len(chosen) > 120:
+            raise GuideError(
+                422, "model_unavailable", "Enter a model name of at most 120 characters."
+            )
+        if self.models and chosen not in self.models and not self.local:
             raise GuideError(
                 422, "model_unavailable", "That model is not available for this connection."
             )

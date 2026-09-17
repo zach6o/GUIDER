@@ -184,6 +184,18 @@ class ConfirmRequest(Schema):
     plan_version: Annotated[int, Field(ge=1)]
 
 
+class StepEdit(Schema):
+    id: UUID
+    title: str = Field(min_length=1, max_length=120)
+    action: str = Field(min_length=1, max_length=1000)
+    expected_result: str = Field(max_length=500)
+    success_criterion: str = Field(min_length=1, max_length=500)
+
+
+class PlanEdit(ConfirmRequest):
+    steps: list[StepEdit] = Field(min_length=1, max_length=12)
+
+
 class ConfirmedPlan(Schema):
     plan: Plan
     session: Session

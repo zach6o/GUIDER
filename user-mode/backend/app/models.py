@@ -68,6 +68,7 @@ class User(Base):
     locale: Mapped[str] = mapped_column(default="en")
     privacy_notice_version: Mapped[str] = mapped_column(default="development-1")
     analytics_opt_in: Mapped[bool] = mapped_column(default=False)
+    provider_tier: Mapped[str] = mapped_column(String(16), default="none", server_default="none")
     auth_revoked_before: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
@@ -79,6 +80,24 @@ class Owned:
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=now, onupdate=now)
+
+
+class ProviderBinding(Owned, Base):
+    __tablename__ = "provider_bindings"
+    __table_args__ = (UniqueConstraint("owner_id", "role"),)
+    role: Mapped[str] = mapped_column(String(30))
+    provider_id: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str] = mapped_column(String(120))
+    sealed_key: Mapped[dict | None] = mapped_column(JSON)
+
+
+class ProviderUsage(Owned, Base):
+    __tablename__ = "provider_usage"
+    role: Mapped[str] = mapped_column(String(30))
+    provider_id: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(16))
+    succeeded: Mapped[bool] = mapped_column(default=False)
+    latency_ms: Mapped[int] = mapped_column(default=0)
 
 
 class GuideTask(Owned, Base):

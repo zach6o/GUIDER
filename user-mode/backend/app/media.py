@@ -1,17 +1,23 @@
 import asyncio
 import hashlib
 import io
+import json
+import os
+import subprocess
+import sys
+import threading
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID, uuid4
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from app.errors import GuideError
 
 MAX_BYTES = 10 * 1024 * 1024
+DECODERS = threading.BoundedSemaphore(2)
 
 
 @dataclass(frozen=True)
@@ -37,7 +43,16 @@ def normalize(raw: bytes) -> NormalizedImage:
                 if getattr(source, "n_frames", 1) != 1:
                     raise GuideError(415, "unsupported_media_type", "Choose a still image.")
                 source.load()
-                oriented = ImageOps.exif_transpose(source).convert("RGB")
+                oriented = ImageOps.exif_transpose(source)
+                if source.info.get("icc_profile"):
+                    oriented = ImageCms.profileToProfile(
+                        oriented,
+                        ImageCms.ImageCmsProfile(io.BytesIO(source.info["icc_profile"])),
+                        ImageCms.createProfile("sRGB"),
+                        outputMode="RGB",
+                    )
+                else:
+                    oriented = oriented.convert("RGB")
                 clean = Image.new("RGB", oriented.size)
                 clean.paste(oriented)
                 output = io.BytesIO()
@@ -59,12 +74,47 @@ def normalize(raw: bytes) -> NormalizedImage:
         ValueError,
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
+        ImageCms.PyCMSError,
     ):
         raise GuideError(422, "image_unreadable", "This image could not be read safely.") from None
 
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_FRAME_EDGE = 2560
+
+
+def decode(raw: bytes) -> NormalizedImage:
+    """Decode untrusted bytes outside the API with CPU, memory and wall-clock bounds."""
+    if len(raw) > MAX_BYTES:
+        raise GuideError(413, "payload_too_large", "Choose an image smaller than 10 MiB.")
+    env = {
+        name: os.environ[name]
+        for name in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+        if name in os.environ
+    }
+    try:
+        with DECODERS:
+            result = subprocess.run(
+                [sys.executable, "-I", str(Path(__file__).with_name("decoder_worker.py"))],
+                input=raw,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        if result.returncode == 2:
+            failure = json.loads(result.stdout)
+            raise GuideError(failure["status"], failure["code"], failure["message"])
+        if result.returncode or len(result.stdout) > MAX_BYTES + 1024:
+            raise ValueError("Decoder failed")
+        header, pixels = result.stdout.split(b"\n", 1)
+        dimensions = json.loads(header)
+        return NormalizedImage(
+            pixels, dimensions["width"], dimensions["height"], hashlib.sha256(pixels).hexdigest()
+        )
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        raise GuideError(422, "image_unreadable", "This image could not be read safely.") from None
 
 
 def prepare_frame(encoded: str) -> bytes:
@@ -79,7 +129,7 @@ def prepare_frame(encoded: str) -> bytes:
         raise GuideError(422, "image_unreadable", "Could not read this frame.") from None
     if len(raw) > MAX_FRAME_BYTES:
         raise GuideError(413, "payload_too_large", "Crop this frame to less than 4 MiB.")
-    clean = normalize(raw)
+    clean = decode(raw)
     if max(clean.width, clean.height) > MAX_FRAME_EDGE or len(clean.pixels) > MAX_FRAME_BYTES:
         raise GuideError(413, "payload_too_large", "Use at most 2,560 pixels per side.")
     return clean.pixels

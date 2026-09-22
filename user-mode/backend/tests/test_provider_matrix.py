@@ -240,9 +240,12 @@ async def test_an_engine_role_without_a_credential_fails_closed():
 # --- registration --------------------------------------------------------
 
 
-def test_a_provider_without_a_credential_is_not_registered():
+def test_personal_keys_need_no_saved_account_provider_configuration():
     registry = default_registry(Settings(environment="test"))
-    assert {descriptor.id for descriptor in registry.describe()} == {"fixture", "openai"}
+    assert {descriptor.id for descriptor in registry.for_role("guide")} == {"openai", "anthropic"}
+    assert isinstance(registry.build("anthropic", "guide"), AnthropicClaude)
+    with pytest.raises(GuideError):
+        registry.build("anthropic", "observe")
     assert isinstance(registry.select("observe"), FixtureProvider)
 
 

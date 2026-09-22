@@ -4,7 +4,7 @@ A visual guide for computer tasks. You share the context; Guider explains; you s
 
 The development app includes a React/TypeScript workspace, an authenticated FastAPI screenshot API, and an interactive screen-guide demo with optional local window mirroring. The demo needs no API key and demonstrates floating hints, sample action detection and automatic progression. Saved tasks support configurable providers, encrypted account connections, editable plans, searchable history, exports and opt-in dictation. With no provider configured, saved tasks use an explicitly synthetic fixture. This is **not a production-ready MVP**.
 
-For what is finished and what still needs external setup, see the [completion checklist](docs/user-mode-guide/23-completion-checklist.md). The [local deployment guide](docs/user-mode-guide/24-local-deployment-and-release.md) explains the options without assuming you already have cloud accounts.
+For personal browser guidance with your own API key, see the [personal-use checklist](docs/user-mode-guide/25-personal-use-readiness.md). For the full product, see the [completion checklist](docs/user-mode-guide/23-completion-checklist.md). The [local deployment guide](docs/user-mode-guide/24-local-deployment-and-release.md) explains the options without assuming you already have cloud accounts.
 
 ## Run with npm or pnpm
 
@@ -30,7 +30,7 @@ The **Demo walkthrough** opens first. Follow the floating **Click here** hints i
 
 Choose **Mirror my window** to see the practice app and its hints as an overlay over a local mirrored preview, then **Resume guide**. Hints point to sample controls, not controls in your real window. The demo takes no screenshots or AI requests and does not analyze or control your actual window. **Change window** replaces the source; **Stop mirroring** returns to the sample desktop and pauses the guide. The fullscreen button previews the browser overlay at a larger size; Escape exits fullscreen. Hiding the page pauses the demo and stops mirroring.
 
-For actual vision guidance, choose **OpenAI guide**, enter your API key in the app, select a model and accept the cloud terms. Describe your goal, choose **Share a window**, then **Check screen**. Review the still, crop or hide private details, check the review box and choose **Send to OpenAI**. Perform the suggested step yourself and check the updated screen when ready. You can add a question before sending, or **Cancel check** while keeping the local preview on. After canceling, capture and review a fresh frame.
+For actual vision guidance, choose **AI screen guide**, choose OpenAI or Claude, enter your API key in the app, select a model and accept the cloud terms. Describe your goal, choose **Share a window**, then **Check screen**. Review the still, crop or hide private details, check the review box and choose **Send to OpenAI** or **Send to Claude**. Perform the suggested step yourself and check the updated screen when ready. You can add a question before sending, or **Cancel check** while keeping the local preview on. After canceling, capture and review a fresh frame.
 
 This local workflow uses the default development configuration and does not require Supabase or an `.env` file. Use desktop Chrome or Edge and keep Guider visible beside the selected window. Hiding Guider stops sharing. The preview stays local; each cloud frame needs a separate review. Sharing expires after 15 minutes; the in-memory key connection expires after 30 minutes. **Disconnect & clear key** closes both. Enter the key only in the app's key field.
 

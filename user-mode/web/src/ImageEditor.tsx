@@ -3,8 +3,8 @@ import { Crop, EyeOff, RotateCcw, Upload, X } from 'lucide-react';
 import { editImage, validBox } from './image';
 import type { Box } from './types';
 
-export function ImageEditor({ initial, busy, onUpload, onCancel, cloud = false }: {
-  initial: Blob; busy: boolean; onUpload: (blob: Blob) => void; onCancel: () => void; cloud?: boolean;
+export function ImageEditor({ initial, busy, onUpload, onCancel, cloud }: {
+  initial: Blob; busy: boolean; onUpload: (blob: Blob) => void; onCancel: () => void; cloud?: string;
 }) {
   const [versions, setVersions] = useState<Blob[]>([initial]);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -42,7 +42,7 @@ export function ImageEditor({ initial, busy, onUpload, onCancel, cloud = false }
   return <section className="editor" aria-labelledby="preview-title">
     <div className="section-heading"><div><span className="eyebrow">BEFORE YOU SHARE</span><h2 id="preview-title">A quick privacy check.</h2></div>
       <button className="icon-button" aria-label="Cancel image preview" onClick={onCancel} disabled={busy}><X size={20} /></button></div>
-    <p className="muted">{cloud ? 'Only the reviewed image below goes to OpenAI when you press Send. Crop out distractions and hide keys, passwords, or personal details.' : 'Only this image will be shared. Crop out distractions and hide keys, passwords, or personal details.'}</p>
+    <p className="muted">{cloud ? `Only the reviewed image below goes to ${cloud} when you press Send. Crop out distractions and hide keys, passwords, or personal details.` : 'Only this image will be shared. Crop out distractions and hide keys, passwords, or personal details.'}</p>
     <div className="editor-tools"><button aria-pressed={mode === 'hide'} onClick={() => setMode('hide')}><EyeOff size={16} /> Hide area</button>
       <button aria-pressed={mode === 'crop'} onClick={() => setMode('crop')}><Crop size={16} /> Crop</button>
       <button disabled={versions.length === 1 || busy} onClick={() => { setVersions(versions.slice(0, -1)); setReviewed(false); }}><RotateCcw size={16} /> Undo</button></div>
@@ -61,10 +61,10 @@ export function ImageEditor({ initial, busy, onUpload, onCancel, cloud = false }
         max={name === 'x' || name === 'width' ? size.width : size.height} onChange={event => setBox({ ...box, [name]: Number(event.target.value) })} /></label>)}
       <button onClick={() => void apply()} disabled={!validBox(box, size.width, size.height)}>{mode === 'crop' ? 'Apply crop' : 'Hide selected area'}</button>
     </fieldset>
-    <p className="privacy-note">{(blob.size / 1024).toFixed(0)} KB · {size.width} × {size.height} · PNG · {cloud ? 'Destination: OpenAI · API usage is billed to your account' : 'No external AI provider'}</p>
+    <p className="privacy-note">{(blob.size / 1024).toFixed(0)} KB · {size.width} × {size.height} · PNG · {cloud ? `Destination: ${cloud} · API usage is billed to your account` : 'No external AI provider'}</p>
     <label className="check-label"><input type="checkbox" checked={reviewed} disabled={busy} onChange={event => setReviewed(event.target.checked)} /> I reviewed this image and hid sensitive information.</label>
     {error && <p className="error" role="alert">{error}</p>}
     <div className="editor-footer"><button className="text-button" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className="primary" disabled={!reviewed || busy || editing} onClick={() => onUpload(blob)}><Upload size={17} />{busy ? (cloud ? 'Getting guidance…' : 'Uploading image…') : (cloud ? 'Send to OpenAI' : 'Upload this image')}</button></div>
+      <button className="primary" disabled={!reviewed || busy || editing} onClick={() => onUpload(blob)}><Upload size={17} />{busy ? (cloud ? 'Getting guidance…' : 'Uploading image…') : (cloud ? `Send to ${cloud}` : 'Upload this image')}</button></div>
   </section>;
 }

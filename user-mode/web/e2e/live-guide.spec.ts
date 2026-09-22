@@ -32,7 +32,7 @@ async function simulatedWindow(page: Page) {
 async function connect(page: Page) {
   await page.goto('/#live');
   await page.bringToFront();
-  await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
+  await page.getByRole('button', { name: 'AI screen guide', exact: true }).click();
   await page.getByLabel('OpenAI API key').fill('sk-test-not-real-key-1234567890');
   await page.getByRole('checkbox', { name: 'I agree to send reviewed frames' }).check();
   await page.getByRole('button', { name: 'Connect OpenAI' }).click();
@@ -171,7 +171,7 @@ test('cancel check keeps sharing and waits for cancellation before a replacement
 
 test('the key can belong to either service, and the page says which', async ({ page }) => {
   await page.goto('/#live');
-  await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
+  await page.getByRole('button', { name: 'AI screen guide', exact: true }).click();
 
   // Whatever is offered, the page asks for that service's key and its models.
   await expect(page.getByLabel('OpenAI API key')).toBeVisible();
@@ -187,4 +187,45 @@ test('the key can belong to either service, and the page says which', async ({ p
   await page.getByLabel('Service').selectOption('openai');
   await expect(page.getByLabel('OpenAI API key')).toBeVisible();
   await expect(page.getByLabel('Vision model')).toHaveValue('gpt-4.1-mini');
+});
+
+test('Claude review and answer identify the actual destination', async ({ page }) => {
+  await simulatedWindow(page);
+  const sent: Record<string, unknown>[] = [];
+  await page.route('**/api/v1/local-guide/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173',
+      'Access-Control-Allow-Headers': 'authorization,content-type',
+      'Access-Control-Allow-Methods': 'POST,DELETE,OPTIONS' };
+    if (route.request().method() === 'OPTIONS' || route.request().method() === 'DELETE'
+      || path.endsWith('/cancel')) return route.fulfill({ status: 204, headers });
+    if (path.endsWith('/checks')) {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ json: guidance, headers });
+    }
+    expect(route.request().postDataJSON().provider).toBe('anthropic');
+    return route.fulfill({ json: { connection_token: 'synthetic-claude', provider: 'anthropic',
+      display_name: 'Claude', model: 'claude-haiku-4-5', expires_in_seconds: 1800 }, headers });
+  });
+  await page.goto('/#live');
+  await page.bringToFront();
+  await page.getByRole('button', { name: 'AI screen guide', exact: true }).click();
+  await page.getByLabel('Service').selectOption('anthropic');
+  await page.getByLabel('Vision model').selectOption('claude-haiku-4-5');
+  await page.getByLabel('Claude API key').fill('sk-ant-synthetic-not-a-real-key');
+  await page.getByRole('checkbox', { name: /I agree to send reviewed frames/ }).check();
+  await page.getByRole('button', { name: 'Connect Claude' }).click();
+  await page.getByLabel('What are you trying to do?').fill('Help me run Python');
+  await page.getByRole('button', { name: 'Share a window', exact: true }).click();
+  await page.getByRole('button', { name: 'Check screen', exact: true }).click();
+  await expect(page.getByText(/Destination: Claude/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send to Claude' })).toBeDisabled();
+  expect(sent).toHaveLength(0);
+  await page.getByRole('checkbox', { name: 'I reviewed this image' }).check();
+  await page.getByRole('button', { name: 'Send to Claude' }).click();
+  await expect(page.getByRole('img', { name: 'Reviewed frame sent to Claude for this answer' })).toBeVisible();
+  expect(sent).toHaveLength(1);
+  await expect(page.getByText(/Reviewed images pass through your local backend to Claude/)).toBeVisible();
+  await page.getByRole('button', { name: 'Disconnect & clear key' }).click();
+  await expect(page.getByLabel('Claude API key')).toHaveValue('');
 });

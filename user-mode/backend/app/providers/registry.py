@@ -6,6 +6,7 @@ provider stays a one-file change (ADR-017).
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -186,6 +187,11 @@ def default_registry(settings: "Settings | None" = None) -> ProviderRegistry:
     registry = ProviderRegistry()
     registry.register(FIXTURE, FixtureProvider)
     registry.register(OPENAI, OpenAIVision)
+    # Personal connections supply their own key per call, without account setup.
+    # Fixture stays first for unconfigured saved-task roles.
+    registry.register(
+        replace(ANTHROPIC, roles=frozenset({"guide"}), byok_only=True), AnthropicClaude
+    )
     if settings is not None and (settings.provider_id or settings.provider_api_key):
         configured = {
             ANTHROPIC.id: AnthropicClaude,

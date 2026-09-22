@@ -109,7 +109,7 @@ test('mirroring shows an interactive demo overlay and closes tracks on stop and 
   await page.getByRole('button', { name: 'Mirror my window', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Mirroring on' })).toBeVisible();
   await page.evaluate(() => { delete document.documentElement.dataset.captureStopped; });
-  await page.getByRole('button', { name: 'OpenAI guide', exact: true }).click();
+  await page.getByRole('button', { name: 'AI screen guide', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-capture-stopped', 'true');
   expect(requests).toBe(0);
 });

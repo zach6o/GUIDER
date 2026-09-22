@@ -1,5 +1,9 @@
 # Guider completion work
 
+For the narrower personal browser/API-key workflow selected on 2026-09-22, see
+[25: Personal-use readiness](25-personal-use-readiness.md). The public/native
+release gates below remain separate.
+
 Started 2026-09-17. Authorized scope: finish the remaining items from the repository review, sequentially. This checklist records verified implementation separately from external release evidence.
 
 1. [x] Provider selection is wired to saved-image analysis and all engine roles. Explicit misconfiguration fails instead of using a fixture. Adapter transport/contract tests pass; real service calls remain a release gate.

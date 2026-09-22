@@ -36,7 +36,7 @@ export function LiveGuide({ onSharingChange }: { onSharingChange: (active: boole
   return <>
     <div className="guide-mode-switch" role="group" aria-label="Screen guide mode">
       <button aria-pressed={mode === 'demo'} onClick={() => setMode('demo')}>Demo walkthrough</button>
-      <button aria-pressed={mode === 'cloud'} onClick={() => setMode('cloud')}>OpenAI guide</button>
+      <button aria-pressed={mode === 'cloud'} onClick={() => setMode('cloud')}>AI screen guide</button>
     </div>
     {mode === 'demo' ? <ScreenGuideDemo onSharingChange={onSharingChange} /> : <CloudLiveGuide onSharingChange={onSharingChange} />}
   </>;
@@ -258,16 +258,16 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
       <div className={sharing ? 'live-preview active' : 'live-preview'}>
         <video ref={video} autoPlay muted playsInline aria-label="Live local preview of the selected window" />
         {!sharing && <div className="preview-placeholder"><MonitorUp size={39} /><h2>Your window, in view.</h2><p>Choose a nonsensitive app window or tab in the browser picker.<br />Keep passwords, banking, and private records out of view.</p><span>No audio. No recording. No automatic uploads.</span></div>}
-        {sharing && <span className="preview-label"><span /> LOCAL LIVE PREVIEW · NOT SENT TO OPENAI</span>}
+        {sharing && <span className="preview-label"><span /> LOCAL LIVE PREVIEW · NOT UPLOADED</span>}
       </div>
       {connected && <label className="followup">Tell Guider what happened, or ask a question<input value={question} maxLength={1000} disabled={checking} onChange={event => setQuestion(event.target.value)} placeholder="For example: I cannot find the terminal. Sent with your next reviewed frame." /></label>}
-      <div className="live-check-bar"><p>{sharing ? 'Bring the issue into view. Only a frame you review and send will reach OpenAI.' : 'Chrome or Edge on desktop works best. Keep Guider visible beside the shared window.'}</p>
+      <div className="live-check-bar"><p>{sharing ? `Bring the issue into view. Only a frame you review and send will reach ${service.label}.` : 'Chrome or Edge on desktop works best. Keep Guider visible beside the shared window.'}</p>
         <button className="primary" onClick={() => void checkScreen()} disabled={!sharing || !goal.trim() || checking || taking || Boolean(review)}><ScanIcon />{taking ? 'Capturing…' : answer ? 'I did that — check again' : 'Check screen'}</button></div>
     </section>
 
-    {review && <div className="cloud-review" ref={resultPanel} tabIndex={-1} aria-label="Review the captured screen"><ImageEditor initial={review} busy={checking} cloud onUpload={frame => void sendFrame(frame)} onCancel={() => { setReview(null); setError(''); }} /></div>}
+    {review && <div className="cloud-review" ref={resultPanel} tabIndex={-1} aria-label="Review the captured screen"><ImageEditor initial={review} busy={checking} cloud={service.label} onUpload={frame => void sendFrame(frame)} onCancel={() => { setReview(null); setError(''); }} /></div>}
 
-    {checking && <div className="checking-status"><p role="status"><LoaderCircle size={17} className="spin" /> OpenAI is checking the reviewed frame.</p><button className="text-button" onClick={() => { cancelPending(); setNotice('Check canceled. Sharing is still on. Capture a fresh frame when ready.'); }}>Cancel check</button></div>}
+    {checking && <div className="checking-status"><p role="status"><LoaderCircle size={17} className="spin" /> {service.label} is checking the reviewed frame.</p><button className="text-button" onClick={() => { cancelPending(); setNotice('Check canceled. Sharing is still on. Capture a fresh frame when ready.'); }}>Cancel check</button></div>}
     {answer && <div className="live-answer" ref={resultPanel} tabIndex={-1} role="region" aria-labelledby="guidance-title">
       <div className="answer-copy"><div className="guide-heading"><span className="brand-mark"><Compass size={22} /></span><div><strong>{answer.disposition === 'needs_context' ? 'A little more context' : 'Here’s your next step'}</strong><small>From the frame checked at {lastChecked}</small></div></div>
         <p className="screen-observation">{answer.observation}</p>
@@ -277,9 +277,9 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
         {answer.question && <div className="context-question"><p>{answer.question}</p></div>}
         <button className="primary" onClick={() => void checkScreen()} disabled={!sharing || checking}><RefreshCw size={16} /> Check the updated screen</button>
         <small className="privacy-note">This describes a checked frame, not a continuously verified screen. You perform every action.</small>
-      </div><div className="checked-frame"><span className="eyebrow">FRAME USED FOR THIS ANSWER</span><img src={checkedImage} alt="Reviewed frame sent to OpenAI for this answer" /></div>
+      </div><div className="checked-frame"><span className="eyebrow">FRAME USED FOR THIS ANSWER</span><img src={checkedImage} alt={`Reviewed frame sent to ${service.label} for this answer`} /></div>
     </div>}
-    <p className="live-footnote">Local preview stays in this tab. Reviewed images pass through your local backend to OpenAI; Guider does not save these frames or answers. OpenAI retention follows your account’s policies. Stopping cannot retract a frame already sent.</p>
+    <p className="live-footnote">Local preview stays in this tab. Reviewed images pass through your local backend to {service.label}; Guider does not save these frames or answers. {service.label} retention follows your account’s policies. Stopping cannot retract a frame already sent.</p>
   </div>;
 }
 

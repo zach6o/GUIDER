@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from app.config import Settings
 from app.main import create_app
 from app.provider import python_fixture
+from app.providers.anthropic import AnthropicClaude
 from app.providers.openai import OpenAIVision
 from app.providers.registry import OPENAI
 
@@ -117,6 +118,43 @@ async def test_cloud_request_uses_reviewed_image_no_tools_no_storage(cloud):
     assert payload["text"]["format"]["strict"] is True
     assert payload["input"][0]["content"][1]["image_url"].startswith("data:image/png;base64,")
     assert KEY not in json.dumps(payload) and KEY not in response.text
+    assert not app.state.settings.storage_path.exists()
+
+
+async def test_claude_personal_connection_works_without_backend_credentials(cloud, monkeypatch):
+    app, client, _ = cloud
+    calls = []
+
+    async def provider(request):
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "claude-haiku-4-5"})
+        return httpx.Response(200, json={
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": json.dumps(ANSWER)}],
+        })
+
+    original_client = AnthropicClaude.client
+
+    def mock_client(self, key):
+        self.transport = httpx.MockTransport(provider)
+        return original_client(self, key)
+
+    monkeypatch.setattr(AnthropicClaude, "client", mock_client)
+    response = await client.post(PREFIX + "/connection", json={
+        "provider": "anthropic", "api_key": KEY, "model": "claude-haiku-4-5",
+        "accepted_cloud_terms": True,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["display_name"] == "Claude"
+    headers = {"Authorization": "Bearer " + response.json()["connection_token"]}
+    response = await client.post(PREFIX + "/checks", json=frame(), headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == ANSWER
+    assert str(calls[-1].url) == "https://api.anthropic.com/v1/messages"
+    assert calls[-1].headers["x-api-key"] == KEY
+    assert json.loads(calls[-1].content)["model"] == "claude-haiku-4-5"
+    assert not app.state.settings.provider_api_key
     assert not app.state.settings.storage_path.exists()
 
 

@@ -176,6 +176,6 @@ export function ScreenGuideDemo({ onSharingChange }: { onSharingChange: (active:
         <p className="demo-local-note">{state.playing ? 'Playback performs clicks only in this sample app.' : 'You click. The demo checks and advances. No Next button needed.'}</p>
       </section>
     </div>
-    <p className="live-footnote">This demonstrates automatic guidance, target hints, action checks and a floating overlay inside the browser. It does not analyze or control other apps. OpenAI guide remains a separate, manually reviewed screen-check flow.</p>
+    <p className="live-footnote">This demonstrates automatic guidance, target hints, action checks and a floating overlay inside the browser. It does not analyze or control other apps. AI screen guide remains a separate, manually reviewed screen-check flow.</p>
   </div>;
 }

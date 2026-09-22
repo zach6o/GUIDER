@@ -4,7 +4,7 @@ A visual guide for computer tasks. You share the context; Guider explains; you s
 
 The development app includes a React/TypeScript workspace, an authenticated FastAPI screenshot API, and an interactive screen-guide demo with optional local window mirroring. The demo needs no API key and demonstrates floating hints, sample action detection and automatic progression. Saved tasks support configurable providers, encrypted account connections, editable plans, searchable history, exports and opt-in dictation. With no provider configured, saved tasks use an explicitly synthetic fixture. This is **not a production-ready MVP**.
 
-For personal browser guidance with your own API key, see the [personal-use checklist](docs/user-mode-guide/25-personal-use-readiness.md). For the full product, see the [completion checklist](docs/user-mode-guide/23-completion-checklist.md). The [local deployment guide](docs/user-mode-guide/24-local-deployment-and-release.md) explains the options without assuming you already have cloud accounts.
+For **automatic guidance with remembered API keys**, see the [personal website setup and usage guide](docs/user-mode-guide/26-personal-automatic-guide.md). It covers goal or pasted-step planning, plan review, screen observation and floating controls, plus Cloudflare Pages + Render + Supabase deployment for multiple computers. The hosted personal site is implemented for an invited-account trial; real provider and cloud deployment acceptance remain open. For the full product, see the [completion checklist](docs/user-mode-guide/23-completion-checklist.md).
 
 ## Run with npm or pnpm
 
@@ -32,7 +32,9 @@ Choose **Mirror my window** to see the practice app and its hints as an overlay 
 
 For actual vision guidance, choose **AI screen guide**, choose OpenAI or Claude, enter your API key in the app, select a model and accept the cloud terms. Describe your goal, choose **Share a window**, then **Check screen**. Review the still, crop or hide private details, check the review box and choose **Send to OpenAI** or **Send to Claude**. Perform the suggested step yourself and check the updated screen when ready. You can add a question before sending, or **Cancel check** while keeping the local preview on. After canceling, capture and review a fresh frame.
 
-This local workflow uses the default development configuration and does not require Supabase or an `.env` file. Use desktop Chrome or Edge and keep Guider visible beside the selected window. Hiding Guider stops sharing. The preview stays local; each cloud frame needs a separate review. Sharing expires after 15 minutes; the in-memory key connection expires after 30 minutes. **Disconnect & clear key** closes both. Enter the key only in the app's key field.
+This manual local workflow uses the default development configuration and does not require Supabase or an `.env` file. Use desktop Chrome or Edge and keep Guider visible beside the selected window. Hiding Guider stops sharing. Each manual cloud frame needs a separate review. Sharing expires after 15 minutes; the active key connection expires after 30 minutes. Remembered keys stay encrypted until **Forget key**. Enter the key only in the app's key field.
+
+Choose **Automatic guide** for a reviewed plan followed by automatic screen checks. The [Chrome/Edge companion](user-mode/extension/README.md) puts the ball, step messages and arrows directly on a browser tab you choose. Without the extension, Start watching opens the floating guide for other windows. The [new guide](docs/user-mode-guide/26-personal-automatic-guide.md) explains permissions, limits and cross-computer key storage.
 
 Provider integration has automated tests with simulated OpenAI responses; a real API-key/model call and the native browser picker still require a manual check. See [implementation status](docs/user-mode-guide/19-implementation-status.md) and [ADR-015](docs/user-mode-guide/adr/015-browser-observation-and-personal-cloud.md).
 
@@ -85,6 +87,7 @@ npm.cmd run build
 npx.cmd playwright install chromium
 npx.cmd playwright test
 npm.cmd run test:integration
+npm.cmd run test:personal
 ```
 
 The screenshot fixture can be regenerated with `uv run python -m scripts.make_fixture` from the backend directory. Dependency versions are pinned in `uv.lock` and `package-lock.json`. Generated contracts cover implemented endpoints only.
@@ -94,7 +97,9 @@ The screenshot fixture can be regenerated with `uv run python -m scripts.make_fi
 - `user-mode/web`: workspace, preview/crop/masking, authenticated API adapter and local demo.
 - `user-mode/web/src/LiveGuide.tsx`: local window preview and reviewed OpenAI frame guidance.
 - `user-mode/backend`: Supabase JWT verification, async database models, migrations, private storage, operation worker, media expiry and tests.
-- `user-mode/backend/app/cloud.py`: ephemeral loopback-only personal OpenAI connector.
+- `user-mode/backend/app/cloud.py`: bounded personal OpenAI/Claude connections and saved-key access.
+- `user-mode/backend/app/personal_app.py`: isolated, account-bound hosted personal API.
+- `render.yaml`: single-instance personal API deployment; frontend deploys separately to Pages.
 - `user-mode/contracts`: checked-in OpenAPI 3.1 and component schemas.
 - `user-mode/client/windows`: independently buildable WPF shell and synthetic PKCE primitives; native capture, real authentication and signed packaging remain open.
 - `user-mode/deploy`: loopback-only Docker Compose preview with PostgreSQL and encrypted media volume.

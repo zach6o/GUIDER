@@ -1,0 +1,24 @@
+# Personal website API only. Keep one instance: sharing grants live in memory.
+services:
+  - type: web
+    name: guider-personal-api
+    runtime: docker
+    plan: free
+    rootDir: user-mode/backend
+    dockerfilePath: ./Dockerfile.personal
+    healthCheckPath: /health
+    envVars:
+      - key: GUIDE_ENVIRONMENT
+        value: production
+      - key: GUIDE_SUPABASE_URL
+        sync: false
+      - key: GUIDE_DATABASE_URL
+        sync: false
+      - key: GUIDE_CREDENTIAL_ROOT
+        generateValue: true
+      - key: GUIDE_ALLOWED_ORIGINS
+        sync: false
+      - key: GUIDE_PERSONAL_ALLOWED_USERS
+        sync: false
+      - key: GUIDE_PROVIDER_DAILY_CALLS
+        value: "200"

@@ -142,6 +142,9 @@ jobs:
       - name: Authenticated browser and API integration
         run: npm run test:integration
 
+      - name: Personal website and automatic guidance integration
+        run: npm run test:personal
+
       - name: Browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

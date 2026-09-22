@@ -6,7 +6,7 @@ export default defineConfig(({ command, mode }) => {
   // Relative to this config's own directory, which is where the .env files are.
   const env = loadEnv(mode, '.', 'VITE_');
   const dev = command === 'serve';
-  const input = { apiUrl: env.VITE_API_URL, supabaseUrl: env.VITE_SUPABASE_URL, dev };
+  const input = { apiUrl: env.VITE_API_URL, personalApiUrl: env.VITE_PERSONAL_API_URL, supabaseUrl: env.VITE_SUPABASE_URL, dev };
   const headers = securityHeaders(input);
   return {
     plugins: [
@@ -16,6 +16,9 @@ export default defineConfig(({ command, mode }) => {
         // forgets the header should still not be able to serve a page that can
         // talk to anywhere. The header remains the stronger of the two.
         name: 'guider-csp',
+        generateBundle() {
+          this.emitFile({ type: 'asset', fileName: '_headers', source: '/*\n' + Object.entries(headers).map(([name, value]) => `  ${name}: ${value}`).join('\n') + '\n' });
+        },
         transformIndexHtml: {
           order: 'post' as const,
           handler: () => [{

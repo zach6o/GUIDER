@@ -18,6 +18,7 @@
 export interface PolicyInput {
   /** `VITE_API_URL`, when one is configured. */
   apiUrl?: string;
+  personalApiUrl?: string;
   /** `VITE_SUPABASE_URL`, when the app is not running its browser demo. */
   supabaseUrl?: string;
   /** Vite's dev and preview servers serve modules and styles the built page
@@ -49,17 +50,12 @@ export function originOf(url?: string): string | null {
   }
 }
 
-/** The local API, which is not configuration.
- *
- *  `src/api.ts` falls back to it when `VITE_API_URL` is unset, and
- *  `src/cloudApi.ts` reaches the live guide's routes there with no override at
- *  all. A policy that left it out would block the product's own backend on every
- *  developer machine, so it is listed here rather than discovered at runtime. */
+/** Default local API. An explicitly configured personal website omits it. */
 export const LOCAL_API_ORIGIN = 'http://127.0.0.1:8000';
 
 /** Every origin this app may open a connection to, `self` included. */
 export function connectSources(input: PolicyInput): string[] {
-  const origins = [LOCAL_API_ORIGIN, originOf(input.apiUrl), originOf(input.supabaseUrl)]
+  const origins = [input.personalApiUrl ? null : LOCAL_API_ORIGIN, originOf(input.apiUrl), originOf(input.personalApiUrl), originOf(input.supabaseUrl)]
     .filter((origin): origin is string => Boolean(origin));
   // Supabase realtime and the dev server's own reload channel are websockets to
   // the same origins, and `connect-src` governs those by scheme.

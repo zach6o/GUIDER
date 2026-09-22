@@ -1,6 +1,43 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+test('automatic guide explains an outdated backend and retries saved-key support', async ({ page }) => {
+  let outdated = true;
+  const connections: Record<string, unknown>[] = [];
+  await page.route('**/api/v1/local-guide/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204 });
+    if (path.endsWith('/saved-keys')) return outdated
+      ? route.fulfill({ status: 404, json: { error: { code: 'invalid_request', message: 'Invalid request.' } } })
+      : route.fulfill({ json: { available: true, providers: [] } });
+    if (path.endsWith('/connection') && route.request().method() === 'POST') {
+      connections.push(route.request().postDataJSON());
+      return route.fulfill({ json: { connection_token: 'synthetic-capability', provider: 'openai',
+        display_name: 'OpenAI', model: 'gpt-4.1-mini', expires_in_seconds: 1800 } });
+    }
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/#live');
+  await page.getByRole('button', { name: 'Automatic guide', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('backend is out of date');
+  await page.getByLabel('OpenAI API key').fill('sk-synthetic-connection-regression');
+  await page.getByRole('checkbox', { name: /Allow my goal/ }).check();
+  await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeDisabled();
+  expect(connections).toHaveLength(0);
+  outdated = false;
+  await page.getByRole('button', { name: 'Retry backend connection' }).click();
+  const remember = page.getByRole('checkbox', { name: /Remember this key securely/ });
+  await expect(remember).toBeEnabled();
+  await expect(remember).toBeChecked();
+  await remember.uncheck();
+  await remember.check();
+  await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Connect OpenAI' }).click();
+  await expect(page.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+  expect(connections).toHaveLength(1);
+  expect(connections[0].remember_key).toBe(true);
+});
+
 const guidance = {
   observation: 'The terminal cannot find the requests package.',
   next_step: 'Check which Python interpreter this terminal is using.',
@@ -48,6 +85,7 @@ test('real capture adapter, explicit cloud review, answer, disconnect', async ({
   const sent: Record<string, unknown>[] = [];
   await page.route('**/api/v1/local-guide/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/saved-keys')) return route.fulfill({ json: { available: false, providers: [] } });
     const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173',
       'Access-Control-Allow-Headers': 'authorization,content-type',
       'Access-Control-Allow-Methods': 'POST,DELETE,OPTIONS' };
@@ -91,6 +129,7 @@ test('stop cancels a pending check and a late answer never appears', async ({ pa
   let sent = false;
   await page.route('**/api/v1/local-guide/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/saved-keys')) return route.fulfill({ json: { available: false, providers: [] } });
     const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173',
       'Access-Control-Allow-Headers': 'authorization,content-type',
       'Access-Control-Allow-Methods': 'POST,DELETE,OPTIONS' };
@@ -123,6 +162,7 @@ test('cancel check keeps sharing and waits for cancellation before a replacement
   let cancelStarted = false;
   await page.route('**/api/v1/local-guide/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/saved-keys')) return route.fulfill({ json: { available: false, providers: [] } });
     const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173',
       'Access-Control-Allow-Headers': 'authorization,content-type',
       'Access-Control-Allow-Methods': 'POST,DELETE,OPTIONS' };
@@ -194,6 +234,7 @@ test('Claude review and answer identify the actual destination', async ({ page }
   const sent: Record<string, unknown>[] = [];
   await page.route('**/api/v1/local-guide/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/saved-keys')) return route.fulfill({ json: { available: false, providers: [] } });
     const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173',
       'Access-Control-Allow-Headers': 'authorization,content-type',
       'Access-Control-Allow-Methods': 'POST,DELETE,OPTIONS' };

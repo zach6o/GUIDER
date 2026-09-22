@@ -6,6 +6,8 @@ import type { CloudGuidance } from './cloudApi';
 import { ImageEditor } from './ImageEditor';
 import { ScreenCapture } from './screenCapture';
 import { ScreenGuideDemo } from './ScreenGuideDemo';
+import { AutomaticGuide } from './AutomaticGuide';
+import { hostedPersonal } from './cloudApi';
 
 /**
  * The services a personal key can belong to. Model names live here because the
@@ -32,13 +34,14 @@ type ProviderId = keyof typeof PROVIDERS;
 const PROVIDER_IDS = Object.keys(PROVIDERS) as ProviderId[];
 
 export function LiveGuide({ onSharingChange }: { onSharingChange: (active: boolean) => void }) {
-  const [mode, setMode] = useState<'demo' | 'cloud'>('demo');
+  const [mode, setMode] = useState<'demo' | 'cloud' | 'automatic'>(hostedPersonal ? 'automatic' : 'demo');
   return <>
     <div className="guide-mode-switch" role="group" aria-label="Screen guide mode">
+      <button aria-pressed={mode === 'automatic'} onClick={() => setMode('automatic')}>Automatic guide</button>
       <button aria-pressed={mode === 'demo'} onClick={() => setMode('demo')}>Demo walkthrough</button>
       <button aria-pressed={mode === 'cloud'} onClick={() => setMode('cloud')}>AI screen guide</button>
     </div>
-    {mode === 'demo' ? <ScreenGuideDemo onSharingChange={onSharingChange} /> : <CloudLiveGuide onSharingChange={onSharingChange} />}
+    {mode === 'automatic' ? <AutomaticGuide onSharingChange={onSharingChange} /> : mode === 'demo' ? <ScreenGuideDemo onSharingChange={onSharingChange} /> : <CloudLiveGuide onSharingChange={onSharingChange} />}
   </>;
 }
 
@@ -53,11 +56,16 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
   const resultPanel = useRef<HTMLDivElement>(null);
   const expiry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiKey, setApiKey] = useState('');
+  const [savedKeys, setSavedKeys] = useState<string[]>([]);
+  const [canSave, setCanSave] = useState(false);
+  const [remember, setRemember] = useState(true);
+  const [replaceKey, setReplaceKey] = useState(false);
   const [provider, setProvider] = useState<ProviderId>('openai');
   const [model, setModel] = useState<string>(PROVIDERS.openai.models[0].id);
   // What the backend said it connected to, rather than what was picked here.
   const [connectedTo, setConnectedTo] = useState('');
   const service = PROVIDERS[provider];
+  const useSavedKey = savedKeys.includes(provider) && !replaceKey;
   const [consent, setConsent] = useState(false);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -76,6 +84,14 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
   const [error, setError] = useState('');
   const previousStep = useRef('');
   const previousGoal = useRef('');
+
+  useEffect(() => {
+    let active = true;
+    void cloudApi.savedKeys().then(result => {
+      if (active) { setSavedKeys(result.providers ?? []); setCanSave(result.available === true); }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const cancelPending = useCallback(() => {
     generation.current++;
@@ -130,9 +146,10 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
     const controller = new AbortController(); connectRequest.current = controller;
     setError(''); setNotice(''); setConnecting(true);
     try {
-      const result = await cloudApi.connect(apiKey.trim(), provider, model, controller.signal);
+      const result = await cloudApi.connect(apiKey.trim(), provider, model, controller.signal, remember && canSave, useSavedKey);
       if (controller.signal.aborted) { void cloudApi.disconnect(result.connection_token).catch(() => {}); return; }
       token.current = result.connection_token;
+      if (remember && canSave) setSavedKeys(keys => [...new Set([...keys, provider])]);
       setApiKey(''); setConnected(true);
       expiry.current = setTimeout(() => {
         disconnect(); setNotice('Your 30-minute cloud connection expired. Connect your key again.');
@@ -231,21 +248,22 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
     {!connected ? <section className="cloud-connect" aria-labelledby="connect-title">
       <div className="cloud-intro"><span className="brand-mark"><KeyRound size={23} /></span>
         <h2 id="connect-title">Connect your {service.label} key.</h2>
-        <p>Your key connects real vision guidance. It stays in your local backend’s memory for this 30-minute connection and is cleared when you disconnect.</p>
-        <div className="connection-facts"><span><CheckCircle2 size={15} /> No account setup required</span><span><ShieldCheck size={15} /> Key never saved to a file</span></div>
+        <p>Use a saved key or connect a new one. Each connection lasts 30 minutes. Remembered keys stay encrypted until you choose Forget key.</p>
+        <div className="connection-facts"><span><CheckCircle2 size={15} /> {hostedPersonal ? 'Saved to your signed-in account' : 'No account setup required'}</span><span><ShieldCheck size={15} /> Remembered keys are encrypted</span></div>
       </div>
       <form onSubmit={event => { event.preventDefault(); void connect(); }}>
         <label>Service<select value={provider} onChange={event => {
           const next = event.target.value as ProviderId;
-          setProvider(next); setModel(PROVIDERS[next].models[0].id);
+          setProvider(next); setModel(PROVIDERS[next].models[0].id); setReplaceKey(false); setApiKey(''); setConsent(false);
         }} disabled={connecting}>{PROVIDER_IDS.map(id => <option key={id} value={id}>{PROVIDERS[id].label}</option>)}</select></label>
-        <label>{service.label} API key<input type="password" autoComplete="off" spellCheck={false} placeholder={service.placeholder} value={apiKey} minLength={20} maxLength={512} onChange={event => setApiKey(event.target.value)} required disabled={connecting} /></label>
+        {useSavedKey ? <div><p>Your saved {service.label} key is ready.</p><button type="button" className="text-button" onClick={() => setReplaceKey(true)}>Replace saved key</button><button type="button" className="text-button" onClick={() => void cloudApi.forgetKey(provider).then(() => setSavedKeys(keys => keys.filter(id => id !== provider))).catch(error => setError(error.message))}>Forget key</button></div> : <label>{service.label} API key<input type="password" autoComplete="off" spellCheck={false} placeholder={service.placeholder} value={apiKey} minLength={20} maxLength={512} onChange={event => setApiKey(event.target.value)} required disabled={connecting} /></label>}
+        {!useSavedKey && <label className="check-label"><input type="checkbox" checked={remember && canSave} disabled={!canSave || connecting} onChange={event => setRemember(event.target.checked)} />Remember this key securely</label>}
         <label>Vision model<select value={model} onChange={event => setModel(event.target.value)} disabled={connecting}>{service.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
         <label className="check-label"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} disabled={connecting} />I agree to send reviewed frames to {service.label} using my API account. API charges and {service.label}’s data policies apply.</label>
-        <button className="primary" disabled={!consent || connecting || apiKey.trim().length < 20}>{connecting ? <><LoaderCircle className="spin" size={17} /> Connecting…</> : <>Connect {service.label} <ArrowRight size={17} /></>}</button>
+        <button className="primary" disabled={!consent || connecting || (!useSavedKey && apiKey.trim().length < 20)}>{connecting ? <><LoaderCircle className="spin" size={17} /> Connecting…</> : <>Connect {service.label} <ArrowRight size={17} /></>}</button>
         <a href={service.policy} target="_blank" rel="noreferrer" className="provider-link">Read {service.label}’s data policies</a>
       </form>
-    </section> : <div className="connected-strip"><span><CheckCircle2 size={16} /> {connectedTo || service.label} connected · {model}</span><button onClick={disconnect}><Unplug size={15} /> Disconnect & clear key</button></div>}
+    </section> : <div className="connected-strip"><span><CheckCircle2 size={16} /> {connectedTo || service.label} connected · {model}</span><button onClick={disconnect}><Unplug size={15} /> {savedKeys.includes(provider) ? 'Disconnect' : 'Disconnect & clear key'}</button></div>}
 
     <section className="live-workspace" aria-label="Screen guidance workspace">
       <div className="live-goal"><label htmlFor="live-goal">What are you trying to do?</label>
@@ -279,7 +297,7 @@ function CloudLiveGuide({ onSharingChange }: { onSharingChange: (active: boolean
         <small className="privacy-note">This describes a checked frame, not a continuously verified screen. You perform every action.</small>
       </div><div className="checked-frame"><span className="eyebrow">FRAME USED FOR THIS ANSWER</span><img src={checkedImage} alt={`Reviewed frame sent to ${service.label} for this answer`} /></div>
     </div>}
-    <p className="live-footnote">Local preview stays in this tab. Reviewed images pass through your local backend to {service.label}; Guider does not save these frames or answers. {service.label} retention follows your account’s policies. Stopping cannot retract a frame already sent.</p>
+    <p className="live-footnote">Local preview stays in this tab. Reviewed images pass through {hostedPersonal ? 'your Guider backend' : 'your local backend'} to {service.label}; Guider does not save these frames or answers. {service.label} retention follows your account’s policies. Stopping cannot retract a frame already sent.</p>
   </div>;
 }
 

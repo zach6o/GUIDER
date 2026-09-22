@@ -40,7 +40,7 @@ from app.providers.base import (
     ScreenContext,
     provider_error,
 )
-from app.providers.schema import render
+from app.providers.schema import personal_schema, render
 
 NAME = "Claude"
 API_VERSION = "2023-06-01"
@@ -55,8 +55,13 @@ DEFAULT_MODEL: Model = "claude-opus-5"
 # need room to write an essay, and the cap is what stops a truncated answer from
 # arriving as malformed JSON.
 LIMITS = {
-    "guide": 1100, "observe": 400, "plan": 2400, "instruct": 700, "import": 2400,
-    "analyze": 2400, "observe_context": 1000,
+    "guide": 1100,
+    "observe": 400,
+    "plan": 2400,
+    "instruct": 700,
+    "import": 2400,
+    "analyze": 2400,
+    "observe_context": 1000,
 }
 
 # What each role is for, in the model's own system slot. The safety policy is
@@ -187,9 +192,7 @@ class AnthropicClaude:
                     503, "incomplete_answer", "The answer was incomplete. Please check again."
                 )
             texts = [
-                block["text"]
-                for block in result.get("content", [])
-                if block.get("type") == "text"
+                block["text"] for block in result.get("content", []) if block.get("type") == "text"
             ]
             if len(texts) != 1:
                 raise ValueError("No single structured answer")
@@ -220,6 +223,36 @@ class AnthropicClaude:
                 f"Could not connect to {NAME}. Check your connection.",
             ) from None
 
+    async def personal(self, key, model, context, schema, image=None):
+        from app.personal_types import POLICY as PERSONAL_POLICY
+
+        content = []
+        if image is not None:
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(image).decode(),
+                    },
+                }
+            )
+        content.append({"type": "text", "text": json.dumps(context)})
+        return await self.send(
+            key,
+            {
+                "model": model,
+                "max_tokens": 5000,
+                "system": PERSONAL_POLICY,
+                "messages": [{"role": "user", "content": content}],
+                "output_config": {
+                    "format": {"type": "json_schema", "schema": personal_schema(schema)}
+                },
+            },
+            schema,
+        )
+
     async def analyze(self, key: SecretStr, model: str, body: CheckInput, image: bytes) -> Guidance:
         return await self.send(
             key,
@@ -246,18 +279,28 @@ class AnthropicClaude:
         )
         content = body["messages"][0]["content"]
         for pixels in images:
-            content.append({"type": "image", "source": {
-                "type": "base64", "media_type": "image/png",
-                "data": base64.b64encode(pixels).decode(),
-            }})
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(pixels).decode(),
+                    },
+                }
+            )
         return await self.send(self.credential(), body, Explanation)
 
     async def observe_context(self, ctx: ContextRequest, image: bytes) -> ScreenContext:
         return await self.send(
             self.credential(),
             self.body(
-                "observe_context", self.model, ScreenContext, "screen_context",
-                ctx.model_dump(), image,
+                "observe_context",
+                self.model,
+                ScreenContext,
+                "screen_context",
+                ctx.model_dump(),
+                image,
             ),
             ScreenContext,
         )
@@ -265,9 +308,7 @@ class AnthropicClaude:
     async def observe(self, ctx: ObserveContext, image: bytes) -> ObserveResult:
         return await self.send(
             self.credential(),
-            self.body(
-                "observe", self.model, ObserveResult, "observation", ctx.model_dump(), image
-            ),
+            self.body("observe", self.model, ObserveResult, "observation", ctx.model_dump(), image),
             ObserveResult,
         )
 
@@ -288,8 +329,6 @@ class AnthropicClaude:
     async def instruct(self, ctx: InstructionContext) -> ProposedInstruction:
         return await self.send(
             self.credential(),
-            self.body(
-                "instruct", self.model, ProposedInstruction, "instruction", ctx.model_dump()
-            ),
+            self.body("instruct", self.model, ProposedInstruction, "instruction", ctx.model_dump()),
             ProposedInstruction,
         )

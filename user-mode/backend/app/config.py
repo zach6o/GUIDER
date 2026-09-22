@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     database_url: str = "sqlite+aiosqlite:///.local/guide.db"
     storage_path: Path = Path(".local/media")
+    personal_keys_path: Path = Path(".local/personal-keys")
+    personal_allowed_users: list[str] = []
     media_encryption_key: SecretStr | None = None
     supabase_url: str = ""
     # Account-mode provider access, off unless configured. D01 has not selected a

@@ -6,6 +6,18 @@ export class ScreenCapture {
   private cleanup: (() => void) | null = null;
 
   get active() { return this.stream !== null; }
+  get handle() {
+    const track = this.stream?.getVideoTracks()[0] as (MediaStreamTrack & {
+      getCaptureHandle?: () => { handle: string } | null;
+    }) | undefined;
+    return track?.getSettings().displaySurface === 'browser' ? track.getCaptureHandle?.()?.handle || '' : '';
+  }
+
+  /** A temporarily muted source still belongs to this capture, but has no fresh pixels. */
+  get ready() {
+    const track = this.stream?.getVideoTracks()[0];
+    return Boolean(track && track.readyState === 'live' && !track.muted);
+  }
 
   stop() {
     this.generation++;
@@ -16,19 +28,23 @@ export class ScreenCapture {
     this.stream = null;
   }
 
-  async start(onStopped: (reason: string) => void): Promise<MediaStream | null> {
+  async start(
+    onStopped: (reason: string) => void,
+    allowHidden: () => boolean = () => false,
+    options: { keepOnMute?: boolean } = {},
+  ): Promise<MediaStream | null> {
     this.stop();
     const generation = this.generation;
     if (!navigator.mediaDevices?.getDisplayMedia) {
       throw new Error('Window sharing requires desktop Chrome or Edge on localhost or HTTPS.');
     }
-    const options: DisplayMediaStreamOptions & Record<string, unknown> = {
+    const displayOptions: DisplayMediaStreamOptions & Record<string, unknown> = {
       video: { displaySurface: 'window', frameRate: { ideal: 5, max: 10 } }, audio: false,
       monitorTypeSurfaces: 'exclude', selfBrowserSurface: 'exclude',
       surfaceSwitching: 'exclude', systemAudio: 'exclude',
     };
     // Must remain directly inside a user click; no await before the picker invocation.
-    const stream = await navigator.mediaDevices.getDisplayMedia(options);
+    const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
     if (generation !== this.generation) { stream.getTracks().forEach(t => t.stop()); return null; }
     const video = stream.getVideoTracks()[0];
     const surface = video?.getSettings().displaySurface;
@@ -36,7 +52,8 @@ export class ScreenCapture {
       stream.getTracks().forEach(t => t.stop());
       throw new Error('Choose a single application window or browser tab, rather than an entire display.');
     }
-    if (document.hidden || navigator.onLine === false || video.readyState === 'ended' || video.muted) {
+    if ((document.hidden && !allowHidden()) || navigator.onLine === false || video.readyState === 'ended'
+        || (video.muted && !options.keepOnMute)) {
       stream.getTracks().forEach(track => track.stop());
       onStopped('The selected window is unavailable. Keep Guider visible and choose a window again.');
       return null;
@@ -44,8 +61,11 @@ export class ScreenCapture {
     stream.getAudioTracks().forEach(track => { track.stop(); stream.removeTrack(track); });
     this.stream = stream;
     const end = () => { this.stop(); onStopped('Sharing ended. Choose a window again when you’re ready.'); };
-    const unavailable = () => { this.stop(); onStopped('The shared window is unavailable. Sharing is off.'); };
-    const hidden = () => { if (document.hidden) { this.stop(); onStopped('Sharing stopped because Guider was hidden.'); } };
+    const unavailable = () => {
+      if (options.keepOnMute) return; // Browser tab transitions can temporarily pause frames.
+      this.stop(); onStopped('The shared window is unavailable. Sharing is off.');
+    };
+    const hidden = () => { if (document.hidden && !allowHidden()) { this.stop(); onStopped('Sharing stopped because Guider was hidden.'); } };
     const offline = () => { this.stop(); onStopped('You’re offline. Sharing has stopped.'); };
     video.addEventListener('ended', end);
     video.addEventListener('mute', unavailable);

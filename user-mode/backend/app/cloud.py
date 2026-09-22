@@ -1,4 +1,4 @@
-"""Ephemeral, loopback-only BYOK connector. Never accesses account data or storage."""
+"""BYOK connections: loopback locally, account-bound in the personal hosted app."""
 
 import asyncio
 import base64
@@ -41,7 +41,9 @@ class ConnectInput(Schema):
     """A key, and which service it belongs to. The model list is the adapter's,
     checked by its capability descriptor rather than spelled out here."""
 
-    api_key: SecretStr = Field(min_length=20, max_length=512)
+    api_key: SecretStr | None = Field(default=None, min_length=20, max_length=512)
+    remember_key: bool = False
+    use_saved_key: bool = False
     # Blank means "whichever adapter serves this role first", so a client that
     # does not care never has to know an id.
     provider: str = Field(default="", max_length=40)
@@ -63,10 +65,13 @@ class Connection:
     provider: str
     model: str
     expires: float
+    owner: str = "local"
     epoch: int = 1
     calls: int = 0
     last_call: float = 0
+    observation_times: deque = field(default_factory=deque)
     pending: asyncio.Task | None = None
+    workflow: object | None = None
 
     def cancel(self) -> None:
         self.epoch += 1
@@ -98,6 +103,14 @@ def local_only(request: Request) -> Connections:
     origin = request.headers.get("origin", "")
     origin_url = urlparse(origin)
     host = request.url.hostname
+    if getattr(request.app.state, "personal_hosted", False):
+        if (
+            not getattr(request.state, "owner", None)
+            or origin not in request.app.state.settings.allowed_origins
+        ):
+            raise GuideError(403, "origin_refused", "Open your configured Guider website.")
+        request.app.state.cloud_connections.sweep()
+        return request.app.state.cloud_connections
     if (
         request.app.state.settings.environment not in {"development", "test"}
         or request.client is None
@@ -116,11 +129,13 @@ def local_only(request: Request) -> Connections:
 
 def connection_for(request: Request, authorization: str) -> tuple[str, Connection]:
     registry = local_only(request)
+    if getattr(request.app.state, "personal_hosted", False):
+        authorization = "Bearer " + request.headers.get("x-guide-connection", "")
     if not authorization.startswith("Bearer "):
         raise GuideError(401, "connection_expired", "Connect your provider key to continue.")
     token = hashlib.sha256(authorization[7:].encode()).hexdigest()
     connection = registry.items.get(token)
-    if not connection:
+    if not connection or connection.owner != getattr(request.state, "owner", "local"):
         raise GuideError(
             401, "connection_expired", "Your connection expired. Connect your key again."
         )
@@ -130,10 +145,16 @@ def connection_for(request: Request, authorization: str) -> tuple[str, Connectio
 @router.post("/connection", response_model=ConnectOutput)
 async def connect(body: ConnectInput, request: Request) -> ConnectOutput:
     registry = local_only(request)
+    owner = getattr(request.state, "owner", "local")
     now = time.monotonic()
     while registry.attempts and registry.attempts[0] < now - 60:
         registry.attempts.popleft()
-    if len(registry.attempts) >= 10 or len(registry.items) >= 8:
+    attempt_limit = 100 if getattr(request.app.state, "personal_hosted", False) else 10
+    if (
+        len(registry.attempts) >= attempt_limit
+        or len(registry.items) >= 200
+        or sum(connection.owner == owner for connection in registry.items.values()) >= 8
+    ):
         raise GuideError(429, "rate_limited", "Too many connections. Disconnect or wait a minute.")
     registry.attempts.append(now)
     providers = request.app.state.providers
@@ -145,13 +166,24 @@ async def connect(body: ConnectInput, request: Request) -> ConnectOutput:
         else providers.first_for("guide")
     )
     model = descriptor.model_or_default(body.model)
-    await providers.build(descriptor.id, "guide").validate(body.api_key, model)
+    key = body.api_key
+    if body.use_saved_key:
+        if key is not None:
+            raise GuideError(422, "validation_failed", "Choose a saved key or enter a new key.")
+        key = await key_action(request, "read", descriptor.id)
+    if key is None:
+        raise GuideError(422, "validation_failed", "Enter an API key or use your saved key.")
+    await admit_hosted(request)
+    await providers.build(descriptor.id, "guide").validate(key, model)
+    if body.remember_key:
+        await key_action(request, "save", descriptor.id, key)
     capability = secrets.token_urlsafe(32)
     registry.items[hashlib.sha256(capability.encode()).hexdigest()] = Connection(
-        key=body.api_key,
+        key=key,
         provider=descriptor.id,
         model=model,
         expires=time.monotonic() + 1800,
+        owner=owner,
     )
     return ConnectOutput(
         connection_token=capability,
@@ -162,12 +194,54 @@ async def connect(body: ConnectInput, request: Request) -> ConnectOutput:
     )
 
 
+@router.get("/saved-keys")
+async def saved_keys(request: Request) -> dict:
+    local_only(request)
+    store = request.app.state.personal_keys
+    providers = request.app.state.providers.for_role("guide")
+    if getattr(request.app.state, "personal_hosted", False):
+        return {"available": True, "providers": await store.providers(request.state.owner)}
+    return {
+        "available": store.available,
+        "providers": [item.id for item in providers if await asyncio.to_thread(store.has, item.id)],
+    }
+
+
+@router.delete("/saved-keys/{provider}", status_code=204)
+async def forget_key(provider: str, request: Request) -> None:
+    registry = local_only(request)
+    request.app.state.providers.descriptor(provider, "guide")
+    await key_action(request, "forget", provider)
+    for token, connection in list(registry.items.items()):
+        if connection.provider == provider and connection.owner == getattr(
+            request.state, "owner", "local"
+        ):
+            registry.remove(token)
+
+
+async def key_action(request: Request, action: str, *args):
+    method = getattr(request.app.state.personal_keys, action)
+    if getattr(request.app.state, "personal_hosted", False):
+        return await method(request.state.owner, *args)
+    return await asyncio.to_thread(method, *args)
+
+
+async def admit_hosted(request: Request) -> None:
+    if getattr(request.app.state, "personal_hosted", False):
+        await request.app.state.personal_keys.admit(request.state.owner)
+
+
 @router.delete("/connection", status_code=204)
 async def disconnect(request: Request, authorization: Annotated[str, Header()] = ""):
     registry = local_only(request)
+    if getattr(request.app.state, "personal_hosted", False):
+        authorization = "Bearer " + request.headers.get("x-guide-connection", "")
     # Idempotent: a previously cleared capability stays cleared.
     if authorization.startswith("Bearer "):
-        registry.remove(hashlib.sha256(authorization[7:].encode()).hexdigest())
+        token = hashlib.sha256(authorization[7:].encode()).hexdigest()
+        found = registry.items.get(token)
+        if found and found.owner == getattr(request.state, "owner", "local"):
+            registry.remove(token)
 
 
 @router.post("/cancel", status_code=204)
@@ -204,6 +278,7 @@ async def check(body: CheckInput, request: Request, authorization: Annotated[str
 
     # Admission happens before decoding so concurrent requests cannot each reserve a call.
     async def perform():
+        await admit_hosted(request)
         image = await asyncio.to_thread(prepare_cloud_image, body.image_base64)
         if connection.epoch != epoch:
             raise asyncio.CancelledError()

@@ -26,6 +26,12 @@ export const pipSupported = () => api() !== null;
  *  unstyled markup. Cross-origin sheets cannot be read; those are skipped. */
 function adoptStyles(target: Window) {
   for (const sheet of Array.from(document.styleSheets)) {
+    if (sheet.href) {
+      const link = target.document.createElement('link');
+      link.rel = 'stylesheet'; link.href = sheet.href;
+      target.document.head.append(link);
+      continue;
+    }
     try {
       const text = Array.from(sheet.cssRules).map(rule => rule.cssText).join('');
       const style = target.document.createElement('style');

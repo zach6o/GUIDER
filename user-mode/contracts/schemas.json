@@ -398,6 +398,21 @@
         "title": "CompletionRequest",
         "description": "How a task ends. `achieved` is a claim about evidence, so the engine\nchecks it; `user_reported` is the user's own account and is labelled as one\neverywhere it appears."
       },
+      "ConfirmInput": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "ConfirmInput"
+      },
       "ConfirmRequest": {
         "properties": {
           "expected_version": {
@@ -439,12 +454,29 @@
       "ConnectInput": {
         "properties": {
           "api_key": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 20,
-            "format": "password",
-            "title": "Api Key",
-            "writeOnly": true
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 20,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "remember_key": {
+            "type": "boolean",
+            "title": "Remember Key",
+            "default": false
+          },
+          "use_saved_key": {
+            "type": "boolean",
+            "title": "Use Saved Key",
+            "default": false
           },
           "provider": {
             "type": "string",
@@ -467,7 +499,6 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "api_key",
           "accepted_cloud_terms"
         ],
         "title": "ConnectInput",
@@ -1654,6 +1685,29 @@
         "title": "FeedbackRequest",
         "description": "Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05\nhas it invalidate the pointer, revoke observation and block the session, so\nit names the step it is about."
       },
+      "FrameInput": {
+        "properties": {
+          "step_index": {
+            "type": "integer",
+            "maximum": 19.0,
+            "minimum": 0.0,
+            "title": "Step Index"
+          },
+          "image_base64": {
+            "type": "string",
+            "maxLength": 5592408,
+            "minLength": 1,
+            "title": "Image Base64"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_index",
+          "image_base64"
+        ],
+        "title": "FrameInput"
+      },
       "Guidance": {
         "properties": {
           "observation": {
@@ -2437,6 +2491,28 @@
           "steps"
         ],
         "title": "PlanEdit"
+      },
+      "PlanInput": {
+        "properties": {
+          "goal": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "pasted_steps": {
+            "type": "string",
+            "maxLength": 16000,
+            "title": "Pasted Steps",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "PlanInput"
       },
       "PlanRequest": {
         "properties": {
@@ -3505,6 +3581,28 @@
         ],
         "title": "StepEdit"
       },
+      "StepInput": {
+        "properties": {
+          "step_index": {
+            "type": "integer",
+            "maximum": 19.0,
+            "minimum": 0.0,
+            "title": "Step Index"
+          },
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_index",
+          "accepted"
+        ],
+        "title": "StepInput"
+      },
       "StopRequest": {
         "properties": {
           "expected_version": {
@@ -3985,6 +4083,27 @@
         ],
         "title": "VerifyRequest",
         "description": "Doc 07's verification route needs evidence or an explicit self-report.\nOnly the self-report arm exists today: objective checking arrives with the\nevidence path, so `evidence_ids` is accepted and refused rather than quietly\nignored."
+      },
+      "WatchInput": {
+        "properties": {
+          "accepted_automatic_frames": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted Automatic Frames"
+          },
+          "scope_reviewed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Scope Reviewed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "accepted_automatic_frames",
+          "scope_reviewed"
+        ],
+        "title": "WatchInput"
       }
     },
     "securitySchemes": {

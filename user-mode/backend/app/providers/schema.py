@@ -36,6 +36,36 @@ def closed_schema(model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
+def personal_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """Close every nested object for strict provider schemas; validate bounds locally."""
+
+    def visit(value):
+        if isinstance(value, list):
+            return [visit(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {
+            key: visit(item)
+            for key, item in value.items()
+            if key
+            not in {
+                "minLength",
+                "maxLength",
+                "minimum",
+                "maximum",
+                "minItems",
+                "maxItems",
+                "default",
+            }
+        }
+        if result.get("type") == "object":
+            result["additionalProperties"] = False
+            result["required"] = list(result.get("properties", {}))
+        return result
+
+    return visit(model.model_json_schema())
+
+
 def render(model: type[BaseModel], name: str, dialect: StructuredOutput) -> dict[str, Any]:
     """The provider-shaped response-format block for `model`."""
     if dialect == "json_schema":

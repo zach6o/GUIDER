@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Guider — guidance on your tab",
+  "version": "0.1.0",
+  "description": "Show Guider's next-step hints and stop controls on a tab you explicitly choose.",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Guider tab guidance" }
+}

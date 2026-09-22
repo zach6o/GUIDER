@@ -18,6 +18,8 @@ from app.database import make_database
 from app.errors import GuideError
 from app.guide.observation import SessionGate
 from app.media import LocalPrivateStorage
+from app.personal_flow import router as personal_router
+from app.personal_keys import PersonalKeys
 from app.providers.registry import default_registry
 from app.providers.settings import router as provider_router
 from app.storage import EncryptedPrivateStorage
@@ -67,6 +69,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.observation = SessionGate()
     app.state.worker_healthy = True
     app.state.cloud_connections = Connections()
+    app.state.personal_keys = PersonalKeys(settings.personal_keys_path)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -81,6 +84,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
         content_type = request.headers.get("content-type", "")
         limit = 11 * 1024 * 1024 if content_type.startswith("multipart/form-data") else 65536
         if request.url.path == "/api/v1/local-guide/checks" or (
+            request.url.path.startswith("/api/v1/local-guide/plans/")
+            and request.url.path.endswith("/frames")
+        ) or (
             request.url.path.startswith("/api/v1/guide/sessions/")
             and request.url.path.endswith(("/observe", "/context"))
         ):
@@ -165,6 +171,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.include_router(router)
     app.include_router(provider_router)
     app.include_router(cloud_router)
+    app.include_router(personal_router)
     return app
 
 

@@ -6649,6 +6649,64 @@
         }
       }
     },
+    "/api/v1/local-guide/saved-keys": {
+      "get": {
+        "tags": [
+          "Personal cloud development"
+        ],
+        "summary": "Saved Keys",
+        "operationId": "saved_keys_api_v1_local_guide_saved_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Saved Keys Api V1 Local Guide Saved Keys Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/saved-keys/{provider}": {
+      "delete": {
+        "tags": [
+          "Personal cloud development"
+        ],
+        "summary": "Forget Key",
+        "operationId": "forget_key_api_v1_local_guide_saved_keys__provider__delete",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/local-guide/cancel": {
       "post": {
         "tags": [
@@ -6722,6 +6780,345 @@
                 "schema": {
                   "$ref": "#/components/schemas/Guidance"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/plans": {
+      "post": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Plan",
+        "operationId": "plan_api_v1_local_guide_plans_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/plans/{plan_id}/confirm": {
+      "post": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Confirm",
+        "operationId": "confirm_api_v1_local_guide_plans__plan_id__confirm_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/plans/{plan_id}/approve-step": {
+      "post": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Approve Step",
+        "operationId": "approve_step_api_v1_local_guide_plans__plan_id__approve_step_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/plans/{plan_id}/watch": {
+      "post": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Watch",
+        "operationId": "watch_api_v1_local_guide_plans__plan_id__watch_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Stop",
+        "operationId": "stop_api_v1_local_guide_plans__plan_id__watch_delete",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/local-guide/plans/{plan_id}/frames": {
+      "post": {
+        "tags": [
+          "Personal automatic guidance"
+        ],
+        "summary": "Observe",
+        "operationId": "observe_api_v1_local_guide_plans__plan_id__frames_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -7137,6 +7534,21 @@
         "title": "CompletionRequest",
         "description": "How a task ends. `achieved` is a claim about evidence, so the engine\nchecks it; `user_reported` is the user's own account and is labelled as one\neverywhere it appears."
       },
+      "ConfirmInput": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "ConfirmInput"
+      },
       "ConfirmRequest": {
         "properties": {
           "expected_version": {
@@ -7178,12 +7590,29 @@
       "ConnectInput": {
         "properties": {
           "api_key": {
-            "type": "string",
-            "maxLength": 512,
-            "minLength": 20,
-            "format": "password",
-            "title": "Api Key",
-            "writeOnly": true
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 20,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "remember_key": {
+            "type": "boolean",
+            "title": "Remember Key",
+            "default": false
+          },
+          "use_saved_key": {
+            "type": "boolean",
+            "title": "Use Saved Key",
+            "default": false
           },
           "provider": {
             "type": "string",
@@ -7206,7 +7635,6 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "api_key",
           "accepted_cloud_terms"
         ],
         "title": "ConnectInput",
@@ -8393,6 +8821,29 @@
         "title": "FeedbackRequest",
         "description": "Doc 07's feedback shape. `incorrect_guidance` is the expensive one: doc 05\nhas it invalidate the pointer, revoke observation and block the session, so\nit names the step it is about."
       },
+      "FrameInput": {
+        "properties": {
+          "step_index": {
+            "type": "integer",
+            "maximum": 19.0,
+            "minimum": 0.0,
+            "title": "Step Index"
+          },
+          "image_base64": {
+            "type": "string",
+            "maxLength": 5592408,
+            "minLength": 1,
+            "title": "Image Base64"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_index",
+          "image_base64"
+        ],
+        "title": "FrameInput"
+      },
       "Guidance": {
         "properties": {
           "observation": {
@@ -9176,6 +9627,28 @@
           "steps"
         ],
         "title": "PlanEdit"
+      },
+      "PlanInput": {
+        "properties": {
+          "goal": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "pasted_steps": {
+            "type": "string",
+            "maxLength": 16000,
+            "title": "Pasted Steps",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "PlanInput"
       },
       "PlanRequest": {
         "properties": {
@@ -10244,6 +10717,28 @@
         ],
         "title": "StepEdit"
       },
+      "StepInput": {
+        "properties": {
+          "step_index": {
+            "type": "integer",
+            "maximum": 19.0,
+            "minimum": 0.0,
+            "title": "Step Index"
+          },
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_index",
+          "accepted"
+        ],
+        "title": "StepInput"
+      },
       "StopRequest": {
         "properties": {
           "expected_version": {
@@ -10724,6 +11219,27 @@
         ],
         "title": "VerifyRequest",
         "description": "Doc 07's verification route needs evidence or an explicit self-report.\nOnly the self-report arm exists today: objective checking arrives with the\nevidence path, so `evidence_ids` is accepted and refused rather than quietly\nignored."
+      },
+      "WatchInput": {
+        "properties": {
+          "accepted_automatic_frames": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted Automatic Frames"
+          },
+          "scope_reviewed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Scope Reviewed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "accepted_automatic_frames",
+          "scope_reviewed"
+        ],
+        "title": "WatchInput"
       }
     },
     "securitySchemes": {

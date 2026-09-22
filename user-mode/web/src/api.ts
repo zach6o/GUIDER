@@ -5,7 +5,7 @@ import { demoApi } from './demo';
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 export const supabase = url && key ? createClient(url, key, {
-  auth: { flowType: 'pkce', persistSession: false, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: { flowType: 'pkce', persistSession: Boolean(import.meta.env.VITE_PERSONAL_API_URL), autoRefreshToken: true, detectSessionInUrl: true },
 }) : null;
 export const isDemo = !supabase;
 let identityGeneration = 0;

@@ -20,3 +20,4 @@ playwright-report/
 # stays tracked so shared hooks and permissions can be reviewed.
 .claude/skills/
 .claude/settings.local.json
+user-mode/web/public/guider-extension.zip

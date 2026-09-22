@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { PersonalSite } from './PersonalSite';
 import { ErrorBoundary } from './ErrorBoundary';
 import './style.css';
 
@@ -12,7 +13,7 @@ import './style.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      {import.meta.env.VITE_PERSONAL_API_URL ? <PersonalSite /> : <App />}
     </ErrorBoundary>
   </React.StrictMode>,
 );

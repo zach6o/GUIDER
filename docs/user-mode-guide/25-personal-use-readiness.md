@@ -1,5 +1,11 @@
 # Personal browser guidance readiness
 
+> The selected scope has since expanded to a public website with remembered
+> account keys and automatic guidance. See [the current implementation and
+> hosting guide](26-personal-automatic-guide.md). The assessment below records
+> the earlier manual local review; its transient-key and missing-integration
+> descriptions do not describe the newly implemented personal website.
+
 Reviewed 2026-09-22. Selected scope: **browser screen guidance with your own API
 key**, running on this Windows PC. This checklist supplements the full release
 checklist in [23](23-completion-checklist.md); it does not mark the public or

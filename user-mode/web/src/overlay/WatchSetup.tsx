@@ -14,6 +14,8 @@ import type { MaskArea } from './frameSource';
 import { useFocusTrap } from '../a11y';
 
 export interface WatchSetupProps {
+  personalProvider?: string;
+  floatingGuide?: { enabled: boolean; supported: boolean; onChange: (enabled: boolean) => void };
   /** Opens the browser's own window picker. Must be called inside the click. */
   chooseWindow: () => Promise<MediaStream | null>;
   /** Hands over the chosen window and the mask, and switches watching on. */
@@ -24,7 +26,7 @@ export interface WatchSetupProps {
 type Stage = 'notice' | 'scope';
 const MIN_AREA = 0.005;
 
-export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps) {
+export function WatchSetup({ chooseWindow, onStart, onCancel, personalProvider, floatingGuide }: WatchSetupProps) {
   const [stage, setStage] = useState<Stage>('notice');
   const [masks, setMasks] = useState<MaskArea[]>([]);
   const [drawing, setDrawing] = useState<MaskArea | null>(null);
@@ -40,6 +42,14 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
 
   useEffect(() => () => { live.current?.getTracks().forEach(track => track.stop()); }, []);
 
+  useEffect(() => {
+    const preview = video.current;
+    if (stage !== 'scope' || !preview || !live.current) return;
+    preview.srcObject = live.current;
+    void preview.play().catch(() => {});
+    return () => { preview.srcObject = null; };
+  }, [stage]);
+
   async function choose() {
     setError('');
     try {
@@ -47,13 +57,6 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
       if (!stream) return;
       live.current = stream;
       setStage('scope');
-      // The element exists on the next paint; attach then.
-      queueMicrotask(() => {
-        if (video.current) {
-          video.current.srcObject = stream;
-          void video.current.play().catch(() => {});
-        }
-      });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'That window could not be shared.');
     }
@@ -98,20 +101,24 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
       {stage === 'notice' ? <>
         <span className="brand-mark"><Eye size={24} /></span>
         <h2 id="watch-title">Guider can watch this window while you work.</h2>
-        <p className="muted">{NOTICE_SUMMARY}</p>
+        <p className="muted">{personalProvider ? `Guider will automatically send selected, masked screenshots to ${personalProvider} to guide the plan you confirmed. This uses your API account and may incur charges.` : NOTICE_SUMMARY}</p>
         <div className="notice-sections">
-          {NOTICE.map(section => <article key={section.heading}>
+          {personalProvider ? <>
+            <article><h3>You choose the scope</h3><p>Share one application window or browser tab, then hide private areas. No microphone or whole-display capture. Choose a new source whenever the task moves to another window.</p></article>
+            <article><h3>Automatic screen checks</h3><p>Changes are checked locally. While watching, selected frames may be sent at most six times per minute, including occasional checks while the screen is still. There are at most 120 AI requests per connection and sharing expires after 15 minutes. Guider does not save these frames.</p></article>
+            <article><h3>You stay in control</h3><p>You perform every action. Sharing continues when you switch tabs or applications. Use the floating guide, return to this tab, or use your browser’s stop-sharing control to stop. Pause or Stop sharing cancels pending guidance. Closing the floating control stops sharing. A frame already sent cannot be recalled.</p></article>
+          </> : NOTICE.map(section => <article key={section.heading}>
             <h3>{section.heading}</h3>
             <p>{section.body}</p>
           </article>)}
         </div>
-        <p className="privacy-note"><ShieldCheck size={14} /> {NOTICE_COUNTER_PROMISE}</p>
+        <p className="privacy-note"><ShieldCheck size={14} /> {personalProvider ? 'The guide shows remaining requests. Your provider controls its own retention and billing.' : NOTICE_COUNTER_PROMISE}</p>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="plan-buttons">
           <button className="text-button" onClick={onCancel}>Not now</button>
           <button className="primary" onClick={() => void choose()}>Choose a window</button>
         </div>
-        <small>Notice version {NOTICE_VERSION}. Watching stays off until you press start.</small>
+        <small>Watching stays off until you review the preview and press start.</small>
       </> : <>
         <span className="brand-mark"><EyeOff size={24} /></span>
         <h2 id="watch-title">Hide anything Guider should not see.</h2>
@@ -155,6 +162,14 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
             ? `${masks.length} area${masks.length === 1 ? '' : 's'} hidden`
             : 'Nothing hidden yet'}</span>
         </div>
+        {floatingGuide && <>
+          <label className="check-label"><input type="checkbox" checked={floatingGuide.enabled}
+            disabled={busy || !floatingGuide.supported} onChange={event => floatingGuide.onChange(event.target.checked)} />
+            Keep the guide ball visible over other tabs</label>
+          <p className="privacy-note">{floatingGuide.supported
+            ? 'Start watching opens a floating guide with step messages and Stop controls. You can move it beside your work.'
+            : 'Floating guidance requires desktop Chrome or Edge. In this browser, guidance stays on the Guider page.'}</p>
+        </>}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="plan-buttons">
           <button className="text-button" disabled={busy} onClick={onCancel}>Cancel</button>
@@ -162,7 +177,7 @@ export function WatchSetup({ chooseWindow, onStart, onCancel }: WatchSetupProps)
             {busy ? 'Switching on…' : 'Start watching'}
           </button>
         </div>
-        <small>You can stop watching at any time, in one tap, from the guide.</small>
+        <small>{personalProvider ? 'To stop, use the guide ball’s menu, Stop sharing on the preview, or close the floating window.' : 'You can stop watching at any time, in one tap, from the guide.'}</small>
       </>}
     </section>
   </div>;

@@ -7,6 +7,7 @@ import { securityHeaders } from '../src/csp.ts';
 const root = resolve('dist');
 const headers = securityHeaders({
   apiUrl: process.env.VITE_API_URL, supabaseUrl: process.env.VITE_SUPABASE_URL,
+  personalApiUrl: process.env.VITE_PERSONAL_API_URL,
 });
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript',
   '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
